@@ -10,56 +10,54 @@
 // Executar isso em produção exigiria infraestrutura própria (VPS, fila de
 // jobs, ou serviço gerenciado) — uma decisão de CUSTO RECORRENTE que o
 // item 22 do planejamento da Fase 2B explicitamente proíbe que eu tome
-// sozinho. Por isso, nesta fase, o provider "real" lê os resultados dos
-// TRÊS testes reais já executados na Fase 2A/2A.1 (barbearias-cotia.json,
-// dentistas-cotia.json, restaurantes-barueri.json — mesmos arquivos do
-// moraes-radar-lab, copiados para api/_radar-lab-fixtures/, fora do bundle
-// do Vite), filtrando por segmento+localização.
+// sozinho. Por isso, nesta fase, o provider "real" usa os resultados dos
+// TRÊS testes reais já executados na Fase 2A/2A.1 (mesmos arquivos do
+// moraes-radar-lab), filtrando por segmento+localização.
 //
 // Isso é dado REAL (não fabricado), só que pré-coletado em vez de buscado
 // ao vivo a cada clique — uma limitação explícita e documentada, não uma
-// simulação disfarçada de produção. Ver relatório final da Fase 2B para a
-// recomendação de infraestrutura quando/se a execução ao vivo for
-// autorizada.
+// simulação disfarçada de produção.
+//
+// NOTA TÉCNICA (correção pós-deploy): a primeira versão deste arquivo lia
+// os JSONs via fs.readFileSync com um caminho relativo montado em runtime
+// (path.resolve(__dirname, ...)). Isso funciona em `vite dev` local, mas
+// quebrou em produção (HTTP 500) porque o bundler de Vercel Functions
+// empacota cada function rastreando IMPORTS ESTÁTICOS — uma leitura de
+// arquivo cujo caminho só existe em runtime não é incluída no pacote da
+// function, então o arquivo simplesmente não existe no ambiente implantado
+// (ENOENT). A correção: os três datasets viraram módulos .js com
+// `export default [...]`, importados estaticamente abaixo — o bundler
+// garante que entram no pacote, sem depender do sistema de arquivos em
+// runtime nem de import attributes de JSON (que variam entre versões do
+// Node).
 //
 // Quando a Fase 2B.1 (execução ao vivo) for autorizada e a decisão de
 // infraestrutura tomada, este arquivo passa a chamar um serviço HTTP
 // externo (ex.: um worker com o Docker do laboratório, atrás de
-// autenticação) em vez de ler fixtures locais — o contrato (buscar()) não
-// muda, então DiscoveryService e o resto do pipeline não precisam mudar.
+// autenticação) em vez de usar fixtures estáticas — o contrato (buscar())
+// não muda, então DiscoveryService e o resto do pipeline não precisam mudar.
 
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
-// Caminho relativo a partir deste arquivo até api/_radar-lab-fixtures/
-// (este arquivo fica em src/lib/radar/providers/, a Vercel Function em
-// api/radar-buscar.js — ambos acabam no mesmo bundle de função serverless,
-// então um caminho relativo simples resolve nos dois ambientes: dev local
-// via `vercel dev` e produção).
-const PASTA_FIXTURES = path.resolve(__dirname, '../../../../api/_radar-lab-fixtures')
+import barbeariasCotia from '../../../../api/_radar-lab-fixtures/barbearias-cotia.js'
+import dentistasCotia from '../../../../api/_radar-lab-fixtures/dentistas-cotia.js'
+import restaurantesBarueri from '../../../../api/_radar-lab-fixtures/restaurantes-barueri.js'
 
 // Catálogo do que foi REALMENTE testado na Fase 2A/2A.1 — ver
 // moraes-radar-lab/docs/relatorio-fase-2a.md e relatorio-fase-2a1-validacao.md.
-// Cada entrada: termos de segmento aceitos (minúsculo, sem acento) + termos
-// de localização aceitos + arquivo de fixture correspondente.
 const CATALOGO_TESTADO = [
   {
-    arquivo: 'barbearias-cotia.json',
+    registros: barbeariasCotia,
     segmentos: ['barbearia', 'barbearias', 'barber', 'barbeiro'],
     localizacoes: ['cotia'],
     queryOriginal: 'barbearia in Cotia, SP, Brazil',
   },
   {
-    arquivo: 'dentistas-cotia.json',
+    registros: dentistasCotia,
     segmentos: ['dentista', 'dentistas', 'odontologia', 'odonto', 'clinica odontologica'],
     localizacoes: ['cotia'],
     queryOriginal: 'dentista in Cotia, SP, Brazil',
   },
   {
-    arquivo: 'restaurantes-barueri.json',
+    registros: restaurantesBarueri,
     segmentos: ['restaurante', 'restaurantes'],
     localizacoes: ['barueri'],
     queryOriginal: 'restaurante in Barueri, SP, Brazil',
@@ -101,37 +99,12 @@ export async function buscar({ segmento, localizacao, quantidade }) {
     }
   }
 
-  try {
-    const caminho = path.join(PASTA_FIXTURES, catalogo.arquivo)
-    const texto = fs.readFileSync(caminho, 'utf-8').trim()
-    // Mesmo parser tolerante do normalize.py: aceita array único ou JSON Lines.
-    let registros
-    try {
-      const bruto = JSON.parse(texto)
-      registros = Array.isArray(bruto) ? bruto : [bruto]
-    } catch {
-      registros = texto
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => JSON.parse(l))
-    }
-
-    const limite = Math.max(1, Math.min(50, Number(quantidade) || 20))
-    return {
-      registros: registros.slice(0, limite),
-      provider: 'google_maps_scraper_lab',
-      status: 'ok',
-      duracaoMs: Date.now() - inicio,
-      queryUsada: catalogo.queryOriginal,
-    }
-  } catch (erro) {
-    return {
-      registros: [],
-      provider: 'google_maps_scraper_lab',
-      status: 'erro',
-      mensagemErro: 'Falha ao ler fixture do laboratório',
-      duracaoMs: Date.now() - inicio,
-      _erroTecnico: String(erro && erro.message),
-    }
+  const limite = Math.max(1, Math.min(50, Number(quantidade) || 20))
+  return {
+    registros: catalogo.registros.slice(0, limite),
+    provider: 'google_maps_scraper_lab',
+    status: 'ok',
+    duracaoMs: Date.now() - inicio,
+    queryUsada: catalogo.queryOriginal,
   }
 }
