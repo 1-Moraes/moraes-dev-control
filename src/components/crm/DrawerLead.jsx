@@ -463,11 +463,14 @@ function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado })
         </div>
       </div>
 
-      <ModalConverterCliente
-        lead={modalConverterAberto ? lead : null}
-        onCancelar={() => setModalConverterAberto(false)}
-        onConfirmar={confirmarConversao}
-      />
+      {/* Mesmo padrão de remount-por-key usado nos drawers (DrawerCliente/
+          DrawerProjeto): o modal fica desmontado quando fechado e remonta
+          do zero ao abrir, para que o useState inicial do formulário leia
+          os dados atuais do lead em vez de ficar travado no valor da
+          primeira montagem (bug relatado: campos vazios na conversão). */}
+      {modalConverterAberto ? (
+        <ModalConverterCliente key={lead.id} lead={lead} onCancelar={() => setModalConverterAberto(false)} onConfirmar={confirmarConversao} />
+      ) : null}
 
       <ModalDuplicataCliente
         info={duplicataCliente}
