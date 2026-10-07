@@ -12,9 +12,9 @@
 //        ↓
 //   resultado normalizado + marcado
 
-import { buscar as buscarNoProvider } from './providers/GoogleMapsScraperProvider'
-import { normalizar, calcularCobertura } from './Normalizer'
-import { deduplicar } from './Deduplicator'
+import { buscar as buscarNoProvider } from './providers/GoogleMapsScraperProvider.js'
+import { normalizar, calcularCobertura } from './Normalizer.js'
+import { deduplicar } from './Deduplicator.js'
 
 /**
  * @param {{segmento: string, localizacao: string, quantidade: number}} parametros
