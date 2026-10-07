@@ -196,6 +196,27 @@ export function formatarDataCurta(chaveDiaOuIso) {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
 }
 
+// Formata uma data-só (coluna `date` do Postgres, "YYYY-MM-DD" — ex.:
+// leads.prazo_previsto/project_tasks.prazo) como dd/mm/aaaa, parseando os
+// componentes manualmente em vez de `new Date(iso)`. Mesmo cuidado de
+// calcularSituacaoPrazo (ProjectsService.js): `new Date('2026-08-15')` é
+// interpretado como UTC meia-noite, e em fusos negativos (Brasil) isso pode
+// exibir o dia ANTERIOR — bug sutil que essa função evita de propósito.
+export function formatarDataSegura(dataYYYYMMDD) {
+  if (!dataYYYYMMDD) return '—'
+  const [ano, mes, dia] = dataYYYYMMDD.split('-').map(Number)
+  if (!ano || !mes || !dia) return '—'
+  return new Date(ano, mes - 1, dia).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+// Moeda (BRL) — extraído do Painel de Projeto (Fase 2E) para ser reutilizado
+// também pelo Dashboard (Fase 2F, item "Valor contratado"), em vez de
+// duplicar a mesma formatação em mais de um arquivo.
+export function formatarMoeda(valor) {
+  if (valor === null || valor === undefined || valor === '') return '—'
+  return Number(valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
 // ----------------------------------------------------------------------------
 // Horas úteis entre duas datas — utilitário genérico de calendário, sem
 // nenhum acoplamento a "chamado". Valores de expediente abaixo são só um

@@ -3,6 +3,7 @@
 // a ação de persistir o lead no Supabase mora em LeadsService, chamada
 // pelo Prospeccao.jsx (que também controla loading/confirmação/duplicata),
 // nunca direto neste componente de apresentação.
+import { Link } from 'react-router-dom'
 import { X, Star, ExternalLink, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react'
 
 function Campo({ label, valor }) {
@@ -14,7 +15,7 @@ function Campo({ label, valor }) {
   )
 }
 
-export default function DrawerDetalhesLead({ lead, candidato, onFechar, onSelecionarCandidato, noCrm, enviandoCrm, onAdicionarAoCrm }) {
+export default function DrawerDetalhesLead({ lead, candidato, onFechar, onSelecionarCandidato, noCrm, crmLeadId, enviandoCrm, onAdicionarAoCrm }) {
   if (!lead) return null
 
   return (
@@ -30,6 +31,12 @@ export default function DrawerDetalhesLead({ lead, candidato, onFechar, onSeleci
             <X size={18} />
           </button>
         </div>
+
+        {noCrm ? (
+          <span className="mt-2 inline-flex items-center gap-1 self-start rounded-full bg-(--color-green)/15 px-2 py-0.5 text-[11px] font-semibold text-(--color-green)">
+            <CheckCircle2 size={11} /> Já no CRM
+          </span>
+        ) : null}
 
         {lead.duplicateGroup ? (
           <div className="mt-4 flex items-start gap-2 rounded-xl border border-(--color-amber)/30 bg-(--color-amber)/10 p-3 text-xs text-(--color-ink)">
@@ -92,28 +99,29 @@ export default function DrawerDetalhesLead({ lead, candidato, onFechar, onSeleci
             Selecionar não cria lead no CRM — só marca interesse para análise posterior.
           </p>
 
-          <button
-            type="button"
-            onClick={() => onAdicionarAoCrm?.(lead)}
-            disabled={noCrm || enviandoCrm}
-            className={`flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-              noCrm
-                ? 'cursor-default bg-(--color-green)/15 text-(--color-green)'
-                : 'border border-(--color-primary) text-(--color-primary) hover:bg-(--color-primary-bg) disabled:opacity-60'
-            }`}
-          >
-            {enviandoCrm ? (
-              <>
-                <Loader2 size={14} className="animate-spin" /> Adicionando...
-              </>
-            ) : noCrm ? (
-              <>
-                <CheckCircle2 size={14} /> Adicionado ao CRM
-              </>
-            ) : (
-              'Adicionar ao CRM'
-            )}
-          </button>
+          {noCrm && crmLeadId ? (
+            <Link
+              to={`/dashboard/crm?lead=${crmLeadId}`}
+              className="flex items-center justify-center gap-2 rounded-xl bg-(--color-green)/15 px-4 py-2.5 text-sm font-semibold text-(--color-green) hover:bg-(--color-green)/25"
+            >
+              <CheckCircle2 size={14} /> Abrir no CRM
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onAdicionarAoCrm?.(lead)}
+              disabled={enviandoCrm}
+              className="flex items-center justify-center gap-2 rounded-xl border border-(--color-primary) px-4 py-2.5 text-sm font-semibold text-(--color-primary) transition hover:bg-(--color-primary-bg) disabled:opacity-60"
+            >
+              {enviandoCrm ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" /> Adicionando...
+                </>
+              ) : (
+                'Adicionar ao CRM'
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -662,6 +662,26 @@ create table public.notifications (
   created_at timestamptz not null default now()
 );
 
+-- Fase 2F — "Acessos rápidos" do Dashboard (ver migration
+-- 0005_fase_2f_dashboard_prospeccao.sql). Individual por pessoa, não dado de
+-- equipe — por isso RLS é auth.uid() = profile_id em vez de has_any_role().
+create table public.user_shortcuts (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references public.profiles (id) on delete cascade,
+  nome text not null,
+  url text not null,
+  icone text,
+  ordem integer not null default 0,
+  ativo boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create trigger user_shortcuts_set_updated_at before update on public.user_shortcuts
+  for each row execute function public.set_updated_at();
+
+create index idx_user_shortcuts_profile on public.user_shortcuts (profile_id, ordem);
+
 -- ----------------------------------------------------------------------------
 -- RLS — tabelas de negócio (revisado na Fase 1, item 5 do planejamento).
 --
@@ -924,6 +944,20 @@ alter policy "Administrador pode atualizar project_files" on public.project_file
   rename to "Membros provisionados podem atualizar project_files";
 alter policy "Membros provisionados podem atualizar project_files" on public.project_files
   using (has_any_role());
+
+-- RLS — Fase 2F (Acessos Rápidos do Dashboard): user_shortcuts é dado
+-- INDIVIDUAL (não de equipe), então usa auth.uid() = profile_id em vez de
+-- has_any_role()/is_admin() — cada pessoa só vê/gerencia os próprios atalhos.
+alter table public.user_shortcuts enable row level security;
+
+create policy "Usuário vê os próprios atalhos" on public.user_shortcuts
+  for select using (auth.uid() = profile_id);
+create policy "Usuário cria os próprios atalhos" on public.user_shortcuts
+  for insert with check (auth.uid() = profile_id);
+create policy "Usuário atualiza os próprios atalhos" on public.user_shortcuts
+  for update using (auth.uid() = profile_id);
+create policy "Usuário exclui os próprios atalhos" on public.user_shortcuts
+  for delete using (auth.uid() = profile_id);
 
 -- ============================================================================
 -- Fim do schema proposto. NÃO EXECUTAR sem: (1) projeto Supabase próprio do

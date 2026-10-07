@@ -157,6 +157,65 @@ export async function verificarDuplicata({ origemProvider, origemSourceId, telef
   return null
 }
 
+/**
+ * Versão em LOTE de verificarDuplicata — Fase 2F, item "Já no CRM" do
+ * Radar. MESMA lógica/prioridade de sinais (origem > telefone > domínio
+ * próprio > nome+endereço), só reestruturada para checar MUITOS candidatos
+ * de uma vez com UMA única leitura da tabela `leads`, em vez de repetir
+ * verificarDuplicata() (3 idas ao Supabase cada) para cada card do Radar —
+ * o próprio planejamento pede "não criar uma segunda lógica contraditória",
+ * então aqui só muda a forma de aplicar as mesmas regras, nunca o critério.
+ *
+ * @param {Array<{id:string, source?:string, sourceId?:string, phone?:string, website?:string, name?:string, address?:string}>} leadCandidates
+ * @returns {Promise<Map<string, {leadId: string, sinal: string}>>} chave = candidate.id (id do Radar, não da tabela leads)
+ */
+export async function verificarDuplicatasEmLote(leadCandidates) {
+  requireSupabase()
+  const resultado = new Map()
+  if (!leadCandidates?.length) return resultado
+
+  const { data, error } = await supabase
+    .from('leads')
+    .select('id, nome_empresa, endereco, telefone, website, origem_provider, origem_source_id')
+  if (error) throw error
+  const leadsReais = data || []
+
+  for (const candidato of leadCandidates) {
+    let achado = null
+
+    if (candidato.source && candidato.sourceId) {
+      const l = leadsReais.find((l) => l.origem_provider === candidato.source && l.origem_source_id === candidato.sourceId)
+      if (l) achado = { leadId: l.id, sinal: 'origem (mesma fonte e id)' }
+    }
+
+    if (!achado) {
+      const tel = normalizarTelefone(candidato.phone)
+      if (tel) {
+        const l = leadsReais.find((l) => normalizarTelefone(l.telefone) === tel)
+        if (l) achado = { leadId: l.id, sinal: 'telefone' }
+      }
+    }
+
+    if (!achado) {
+      const dom = dominioProprio(candidato.website)
+      if (dom) {
+        const l = leadsReais.find((l) => dominioProprio(l.website) === dom)
+        if (l) achado = { leadId: l.id, sinal: 'domínio próprio' }
+      }
+    }
+
+    if (!achado && candidato.name) {
+      const chave = `${candidato.name.trim().toLowerCase()}::${(candidato.address || '').trim().toLowerCase()}`
+      const l = leadsReais.find((l) => `${(l.nome_empresa || '').trim().toLowerCase()}::${(l.endereco || '').trim().toLowerCase()}` === chave)
+      if (l) achado = { leadId: l.id, sinal: 'nome + endereço' }
+    }
+
+    if (achado) resultado.set(candidato.id, achado)
+  }
+
+  return resultado
+}
+
 async function obterOuCriarOrigemRadar() {
   const { data } = await supabase.from('lead_sources').select('id').eq('nome', 'Radar de Prospecção').maybeSingle()
   return data?.id || null

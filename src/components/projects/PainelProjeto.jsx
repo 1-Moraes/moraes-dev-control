@@ -19,6 +19,7 @@ import {
   moverEtapaProjeto,
   calcularProgressoTarefas,
 } from '../../lib/projects/ProjectsService'
+import { formatarMoeda } from '../../lib/helpers'
 import TimelineEtapas from './TimelineEtapas'
 import ChipPrazo from './ChipPrazo'
 import SubpainelTarefas from './SubpainelTarefas'
@@ -29,11 +30,6 @@ function telefoneParaWhatsapp(telefone) {
   const digitos = telefone.replace(/\D/g, '')
   if (!digitos) return null
   return `https://wa.me/55${digitos.replace(/^55/, '')}`
-}
-
-function formatarMoeda(valor) {
-  if (valor === null || valor === undefined || valor === '') return '—'
-  return Number(valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
 function Campo({ label, children }) {
