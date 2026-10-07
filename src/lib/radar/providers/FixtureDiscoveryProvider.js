@@ -1,41 +1,32 @@
-// GoogleMapsScraperProvider — implementação concreta de DiscoveryProvider,
-// MODO LAB (item 5 do planejamento da Fase 2B).
+// FixtureDiscoveryProvider — implementação de DiscoveryProvider baseada em
+// fixtures estáticas (RENOMEADO de GoogleMapsScraperProvider.js no ajuste da
+// Fase 3A — "busca dinâmica por localidade").
 //
-// POR QUE MODO LAB, NÃO PRODUÇÃO:
-// O scraper real (gosom/google-maps-scraper) roda em Docker com Playwright,
-// levando de 1 a poucos minutos por consulta. Isso NÃO pode rodar:
-//   - dentro do frontend React (nunca é empacotado no bundle Vite);
-//   - dentro de uma Vercel Function comum (sem suporte a Playwright/
-//     processos de longa duração no plano usado por este projeto).
-// Executar isso em produção exigiria infraestrutura própria (VPS, fila de
-// jobs, ou serviço gerenciado) — uma decisão de CUSTO RECORRENTE que o
-// item 22 do planejamento da Fase 2B explicitamente proíbe que eu tome
-// sozinho. Por isso, nesta fase, o provider "real" usa os resultados dos
+// POR QUE ESTE PROVIDER SÓ COBRE 3 COMBINAÇÕES (a causa raiz do ajuste):
+// este provider nunca consultou nada ao vivo — ele é um catálogo fixo de
 // TRÊS testes reais já executados na Fase 2A/2A.1 (mesmos arquivos do
-// moraes-radar-lab), filtrando por segmento+localização.
+// moraes-radar-lab): barbearias em Cotia, dentistas em Cotia, restaurantes
+// em Barueri. Qualquer busca fora dessas 3 combinações nunca teve chance de
+// funcionar — não é um bug de cache, de normalização nem de UI, é a
+// cobertura do próprio provider. Esse é exatamente o diagnóstico pedido no
+// ajuste: "Cotia funciona" porque é a localidade coberta pelas fixtures de
+// barbearia/dentista; "Itapevi/Barueri/Osasco/São Paulo/Praia Grande" não
+// funcionavam porque simplesmente não existe fixture pra elas (Barueri só
+// tem fixture de RESTAURANTE, não de barbearia/dentista — por isso nem toda
+// combinação "funciona mesmo dentro das 3 cidades testadas").
 //
-// Isso é dado REAL (não fabricado), só que pré-coletado em vez de buscado
-// ao vivo a cada clique — uma limitação explícita e documentada, não uma
-// simulação disfarçada de produção.
+// Desde este ajuste, este provider NUNCA é mais o provider real padrão —
+// ele continua existindo só para:
+//   - desenvolvimento local sem rede (ex.: sem acesso à internet);
+//   - testes automatizados determinísticos (ver __tests__);
+//   - demonstração offline;
+//   - fallback explícito via DISCOVERY_PROVIDER=fixture (nunca o padrão).
+// O provider real/dinâmico agora é OpenStreetMapProvider.js — ver esse
+// arquivo e DiscoveryService.js para a seleção entre os dois.
 //
-// NOTA TÉCNICA (correção pós-deploy): a primeira versão deste arquivo lia
-// os JSONs via fs.readFileSync com um caminho relativo montado em runtime
-// (path.resolve(__dirname, ...)). Isso funciona em `vite dev` local, mas
-// quebrou em produção (HTTP 500) porque o bundler de Vercel Functions
-// empacota cada function rastreando IMPORTS ESTÁTICOS — uma leitura de
-// arquivo cujo caminho só existe em runtime não é incluída no pacote da
-// function, então o arquivo simplesmente não existe no ambiente implantado
-// (ENOENT). A correção: os três datasets viraram módulos .js com
-// `export default [...]`, importados estaticamente abaixo — o bundler
-// garante que entram no pacote, sem depender do sistema de arquivos em
-// runtime nem de import attributes de JSON (que variam entre versões do
-// Node).
-//
-// Quando a Fase 2B.1 (execução ao vivo) for autorizada e a decisão de
-// infraestrutura tomada, este arquivo passa a chamar um serviço HTTP
-// externo (ex.: um worker com o Docker do laboratório, atrás de
-// autenticação) em vez de usar fixtures estáticas — o contrato (buscar())
-// não muda, então DiscoveryService e o resto do pipeline não precisam mudar.
+// NOTA TÉCNICA (herdada, ainda válida): os datasets são módulos .js com
+// `export default [...]`, nunca lidos via fs em runtime — necessário porque
+// o bundler de Vercel Functions rastreia só imports estáticos.
 
 import barbeariasCotia from '../../../../api/_radar-lab-fixtures/barbearias-cotia.js'
 import dentistasCotia from '../../../../api/_radar-lab-fixtures/dentistas-cotia.js'
@@ -91,10 +82,13 @@ export async function buscar({ segmento, localizacao, quantidade }) {
   const catalogo = encontrarFixture(segmento, localizacao)
 
   if (!catalogo) {
+    // PROVIDER_SEM_COBERTURA (item 14 do ajuste) — diferente de "busca
+    // executada, zero resultados": este provider nunca teve chance de
+    // procurar essa combinação, porque ela não está no catálogo fixo.
     return {
       registros: [],
-      provider: 'google_maps_scraper_lab',
-      status: 'sem_resultado',
+      provider: 'fixture_dev',
+      status: 'sem_cobertura',
       duracaoMs: Date.now() - inicio,
     }
   }
@@ -102,7 +96,7 @@ export async function buscar({ segmento, localizacao, quantidade }) {
   const limite = Math.max(1, Math.min(50, Number(quantidade) || 20))
   return {
     registros: catalogo.registros.slice(0, limite),
-    provider: 'google_maps_scraper_lab',
+    provider: 'fixture_dev',
     status: 'ok',
     duracaoMs: Date.now() - inicio,
     queryUsada: catalogo.queryOriginal,

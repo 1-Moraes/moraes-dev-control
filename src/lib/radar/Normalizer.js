@@ -41,16 +41,17 @@ function vazioParaNulo(v) {
 }
 
 /**
- * @param {Object} bruto - registro Entry do gosom/google-maps-scraper
+ * @param {Object} bruto - registro no formato "Entry" (qualquer provider converte pra esse shape — ver src/lib/radar/providers/)
  * @param {string} query
  * @param {number} indice
+ * @param {string} [providerName] - identificador do provider real que originou o registro (ajuste da Fase 3A — antes era hardcoded 'google_maps_scraper', o que ficou incorreto desde que o provider padrão passou a ser dinâmico)
  * @returns {LeadCandidate}
  */
-export function normalizarRegistro(bruto, query, indice) {
+export function normalizarRegistro(bruto, query, indice, providerName = 'desconhecido') {
   const enderecoCompleto = bruto.complete_address || {}
 
   return {
-    source: 'google_maps_scraper',
+    source: providerName,
     sourceId: vazioParaNulo(bruto.place_id || bruto.cid),
     name: vazioParaNulo(bruto.title),
     category: vazioParaNulo(bruto.category),
@@ -76,10 +77,11 @@ export function normalizarRegistro(bruto, query, indice) {
 /**
  * @param {Object[]} registrosBrutos
  * @param {string} query
+ * @param {string} [providerName]
  * @returns {LeadCandidate[]}
  */
-export function normalizar(registrosBrutos, query) {
-  return registrosBrutos.map((r, i) => normalizarRegistro(r, query, i))
+export function normalizar(registrosBrutos, query, providerName) {
+  return registrosBrutos.map((r, i) => normalizarRegistro(r, query, i, providerName))
 }
 
 /**

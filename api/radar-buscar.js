@@ -1,18 +1,21 @@
-// Vercel Function — "Radar Service/API" do planejamento da Fase 2B.
+// Vercel Function — "Radar Service/API" do planejamento da Fase 2B, com
+// busca dinâmica por localidade desde o ajuste da Fase 3A.
 //
 //   PROSPECÇÃO UI  →  Radar Service/API (este arquivo)  →  DiscoveryService
-//        →  DiscoveryProvider  →  GoogleMapsScraperProvider
+//        →  DiscoveryProvider  →  OpenStreetMapProvider (real, padrão) ou
+//           FixtureDiscoveryProvider (DISCOVERY_PROVIDER=fixture, dev/teste)
 //        →  Normalizer  →  Deduplicator  →  resultado normalizado
 //
 // O frontend (src/pages/Prospeccao.jsx) só conhece este endpoint HTTP — não
 // importa nada de src/lib/radar/ diretamente, e nunca vê o nome do provider
-// real por trás. Isso é o que permite trocar/adicionar provider (ex.: um
-// futuro GooglePlacesProvider) sem tocar no React.
+// real por trás. Isso é o que permite trocar/adicionar provider sem tocar
+// no React.
 //
-// Roda server-side (runtime Node da Vercel): é aqui, e só aqui, que
-// qualquer chamada futura a um provider real com credenciais aconteceria —
-// nunca no bundle do Vite. Nesta fase (MODO LAB), nem isso é necessário:
-// o provider lê fixtures locais (ver GoogleMapsScraperProvider.js).
+// Roda server-side (runtime Node da Vercel) — é aqui, e só aqui, que a
+// consulta a serviços externos (Nominatim/Overpass, ver
+// OpenStreetMapProvider.js) acontece. Nenhuma chave é necessária para esses
+// dois serviços; se um dia um provider pago exigir API key, ela entraria
+// aqui via env var server-side, nunca em VITE_* (nunca exposta ao bundle).
 //
 // SEGURANÇA: nenhuma credencial do Moraes.Dev Control, Supabase, GitHub ou
 // Vercel é lida, usada ou logada aqui. O log de busca (abaixo) só registra
@@ -74,6 +77,7 @@ export default async function handler(req, res) {
         duracaoMs: resultado.duracaoMs,
         status: resultado.status,
         erro: resultado.mensagemErro || null,
+        metadados: resultado.metadados || null,
       })
     )
 

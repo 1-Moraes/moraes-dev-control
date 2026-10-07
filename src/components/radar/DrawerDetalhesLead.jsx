@@ -6,6 +6,16 @@
 import { Link } from 'react-router-dom'
 import { X, Star, ExternalLink, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react'
 
+// Rótulos legíveis para o identificador de provider salvo em lead.source
+// (ajuste da Fase 3A — "busca dinâmica por localidade"). Qualquer provider
+// não listado aqui cai no fallback `|| lead.source` (mostra o identificador
+// bruto em vez de quebrar).
+const LABEL_FONTE = {
+  openstreetmap: 'OpenStreetMap (Nominatim + Overpass)',
+  fixture_dev: 'Catálogo de teste (desenvolvimento)',
+  desconhecido: 'Fonte não identificada',
+}
+
 function Campo({ label, valor }) {
   return (
     <div>
@@ -68,7 +78,7 @@ export default function DrawerDetalhesLead({ lead, candidato, onFechar, onSeleci
             </dd>
           </div>
           <Campo label="Coordenadas" valor={lead.latitude && lead.longitude ? `${lead.latitude}, ${lead.longitude}` : null} />
-          <Campo label="Fonte" valor="Google Maps (gosom/google-maps-scraper, modo laboratório)" />
+          <Campo label="Fonte" valor={LABEL_FONTE[lead.source] || lead.source} />
           <Campo label="Descoberto em" valor={lead.discoveredAt ? new Date(lead.discoveredAt).toLocaleString('pt-BR') : null} />
         </dl>
 

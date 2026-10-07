@@ -6,8 +6,8 @@
 //        ↓ fetch('/api/radar-buscar')  (uma chamada por segmento)
 //   Radar Service/API (api/radar-buscar.js)
 //        ↓
-//   DiscoveryService → DiscoveryProvider → GoogleMapsScraperProvider
-//        ↓                                   (MODO LAB — ver o arquivo)
+//   DiscoveryService → DiscoveryProvider → OpenStreetMapProvider (real,
+//        ↓                                  dinâmico — padrão desde a Fase 3A)
 //   Normalizer → Deduplicator → resultado normalizado
 //        ↓
 //   WebsiteAnalyzer (classifica presença digital) + OpportunityScore
@@ -164,7 +164,7 @@ export default function Prospeccao() {
   const navigate = useNavigate()
   const [modoBusca, setModoBusca] = useState('simples') // simples|multissegmento
   const [form, setForm] = useState({ segmento: '', localizacao: '', quantidade: 20 })
-  const [estado, setEstado] = useState('inicial') // inicial|buscando|normalizando|sucesso|sem_resultado|erro|bloqueio
+  const [estado, setEstado] = useState('inicial') // inicial|buscando|normalizando|sucesso|sem_resultado|sem_cobertura|indisponivel|erro|bloqueio
   const [resultado, setResultado] = useState(null)
   const [progressoMultissegmento, setProgressoMultissegmento] = useState(null) // [{segmento,status}]
   const [restauradoDoCache, setRestauradoDoCache] = useState(null) // { savedAt, expirado } | null
@@ -292,12 +292,17 @@ export default function Prospeccao() {
       setEstado('normalizando')
       await new Promise((r) => setTimeout(r, 200))
 
+      // Ajuste da Fase 3A (item 14): "sem resultado" (fonte funcionou, nada
+      // encontrado), "sem cobertura" (fonte não reconhece essa localização/
+      // combinação) e "indisponível" (não deu pra consultar a fonte agora)
+      // são estados DIFERENTES — nunca mostrados com a mesma mensagem.
       if (!resp.ok || dados.status === 'erro') {
         setEstado('erro')
         return
       }
-      if (dados.status === 'bloqueio') {
-        setEstado('bloqueio')
+      if (['bloqueio', 'sem_cobertura', 'indisponivel'].includes(dados.status)) {
+        setEstado(dados.status)
+        limparCacheBusca()
         return
       }
       aplicarResultado('simples', parametros, dados)
@@ -324,7 +329,13 @@ export default function Prospeccao() {
         body: JSON.stringify({ segmento, localizacao, quantidade }),
       })
       const dados = await resp.json()
-      if (!resp.ok || dados.status === 'erro') throw new Error(dados.mensagemErro || 'Falha na busca deste segmento.')
+      // 'erro'/'bloqueio'/'indisponivel' contam como falha DESTE segmento
+      // (não descartam os outros, ver executarBuscaMultissegmento); 'sem_
+      // resultado'/'sem_cobertura' são execuções bem-sucedidas que só não
+      // acharam nada — nunca tratadas como falha.
+      if (!resp.ok || ['erro', 'bloqueio', 'indisponivel'].includes(dados.status)) {
+        throw new Error(dados.mensagemErro || 'Falha na busca deste segmento.')
+      }
       return dados
     }
 
@@ -351,10 +362,11 @@ export default function Prospeccao() {
     // mesmo negócio listado em "Salões de beleza" e "Clínicas de estética").
     const { leads: dedupicados, gruposDuplicados } = deduplicar(unificados)
 
+    const totalDedup = dedupicados.length || 1 // evita divisão por zero quando todos os segmentos vieram vazios
     const cobertura = {
-      telefone: Math.round((dedupicados.filter((l) => l.phone).length / dedupicados.length) * 1000) / 10,
-      website: Math.round((dedupicados.filter((l) => l.website).length / dedupicados.length) * 1000) / 10,
-      coordenadas: Math.round((dedupicados.filter((l) => l.latitude && l.longitude).length / dedupicados.length) * 1000) / 10,
+      telefone: Math.round((dedupicados.filter((l) => l.phone).length / totalDedup) * 1000) / 10,
+      website: Math.round((dedupicados.filter((l) => l.website).length / totalDedup) * 1000) / 10,
+      coordenadas: Math.round((dedupicados.filter((l) => l.latitude && l.longitude).length / totalDedup) * 1000) / 10,
     }
 
     const dadosUnificados = {
@@ -501,7 +513,7 @@ export default function Prospeccao() {
             Busca experimental de empresas por segmento e localização, com análise de oportunidade e visualização em lista e mapa.
           </p>
         </div>
-        {estado === 'sucesso' || estado === 'sem_resultado' ? (
+        {['sucesso', 'sem_resultado', 'sem_cobertura', 'indisponivel', 'erro', 'bloqueio'].includes(estado) ? (
           <button
             type="button"
             onClick={novaPesquisa}
@@ -609,8 +621,12 @@ export default function Prospeccao() {
           estado={estado}
           detalhe={
             estado === 'sem_resultado'
-              ? 'Neste MVP (modo laboratório), apenas combinações já testadas têm dados reais — tente "Barbearias"/"Cotia, SP", "Dentistas"/"Cotia, SP" ou "Restaurantes"/"Barueri, SP".'
-              : undefined
+              ? 'A fonte de descoberta foi consultada normalmente, mas não encontrou empresas para esta combinação de segmento e localização.'
+              : estado === 'sem_cobertura'
+                ? 'Tente uma localização mais específica (ex.: "cidade - UF") ou confira a grafia — a fonte não reconheceu esse lugar ou não possui dados mapeados ali.'
+                : estado === 'indisponivel'
+                  ? 'A fonte de descoberta (OpenStreetMap) pode estar temporariamente fora do ar ou demorando demais para responder. Tente novamente em alguns instantes.'
+                  : undefined
           }
         />
       ) : (

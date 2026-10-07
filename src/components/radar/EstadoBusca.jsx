@@ -1,7 +1,8 @@
-// Estados da busca — item 7 do planejamento. Nunca mostra erro técnico
-// cru ao usuário; detalhes técnicos só vão para o console/log do servidor
-// (ver api/radar-buscar.js).
-import { Radar, Loader2, SearchX, AlertCircle, ShieldAlert } from 'lucide-react'
+// Estados da busca — item 7 do planejamento, ampliado no ajuste da Fase 3A
+// (item 14: "não confundir sem resultados com fonte indisponível"). Nunca
+// mostra erro técnico cru ao usuário; detalhes técnicos só vão para o
+// console/log do servidor (ver api/radar-buscar.js).
+import { Radar, Loader2, SearchX, AlertCircle, ShieldAlert, MapPinOff, WifiOff } from 'lucide-react'
 
 const CONFIG = {
   inicial: {
@@ -25,6 +26,16 @@ const CONFIG = {
     icon: SearchX,
     titulo: 'Nenhuma empresa foi encontrada para esta busca.',
     cor: 'text-(--color-ink-secondary)',
+  },
+  sem_cobertura: {
+    icon: MapPinOff,
+    titulo: 'A fonte de descoberta atual não possui cobertura para esta localidade ou segmento.',
+    cor: 'text-(--color-ink-secondary)',
+  },
+  indisponivel: {
+    icon: WifiOff,
+    titulo: 'Não foi possível consultar a fonte de descoberta agora.',
+    cor: 'text-(--color-amber)',
   },
   erro: {
     icon: AlertCircle,
