@@ -28,8 +28,15 @@ import {
   adicionarNota,
   atualizarCampos,
   listarMembrosEquipe,
+  buscarUltimaAnalise,
 } from '../../lib/crm/LeadsService'
 import { converterLeadEmCliente, vincularLeadAClienteExistente } from '../../lib/clients/ClientsService'
+// Classificação do Opportunity Score (Fase 3A) — só a config de rótulos/
+// cores, lida aqui só pra exibir o score de forma discreta no CRM (NUNCA um
+// redesenho do CRM, item explícito do planejamento). O cálculo em si já
+// aconteceu no Radar antes da transferência; este componente só LÊ a
+// última análise persistida, nunca recalcula.
+import { classificarScore } from '../../lib/radar/OpportunityScoreConfig'
 import ModalConverterCliente from '../clients/ModalConverterCliente'
 import ModalDuplicataCliente from '../clients/ModalDuplicataCliente'
 
@@ -76,6 +83,7 @@ function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado })
   const [duplicataCliente, setDuplicataCliente] = useState(null)
   const [clienteConvertido, setClienteConvertido] = useState(null)
   const [erroConversao, setErroConversao] = useState(null)
+  const [ultimaAnalise, setUltimaAnalise] = useState(null)
   const [comercial, setComercial] = useState(() => ({
     prioridade: lead.prioridade || 'media',
     responsavel_id: lead.responsavel_id || '',
@@ -103,6 +111,23 @@ function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado })
       .catch(() => {})
       .finally(() => {
         if (!cancelado) setCarregando(false)
+      })
+    return () => {
+      cancelado = true
+    }
+  }, [lead.id])
+
+  // Última análise do Radar (Fase 3A) — carregamento independente e
+  // best-effort: a ausência de análise (lead criado manualmente, não via
+  // Radar) é um estado normal, nunca um erro exibido na tela.
+  useEffect(() => {
+    let cancelado = false
+    buscarUltimaAnalise(lead.id)
+      .then((a) => {
+        if (!cancelado) setUltimaAnalise(a)
+      })
+      .catch(() => {
+        if (!cancelado) setUltimaAnalise(null)
       })
     return () => {
       cancelado = true
@@ -312,6 +337,23 @@ function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado })
               )}
             </dd>
           </div>
+          {ultimaAnalise ? (
+            <div>
+              <dt className="text-[11px] font-medium uppercase tracking-wide text-(--color-ink-secondary)">Opportunity Score</dt>
+              <dd className="mt-0.5 flex items-center gap-1.5 text-sm text-(--color-ink)">
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${
+                    { verde: 'bg-(--color-green)/15 text-(--color-green)', azul: 'bg-(--color-primary-bg) text-(--color-primary)', amber: 'bg-(--color-amber)/15 text-(--color-amber)', neutro: 'bg-(--color-canvas) text-(--color-ink-secondary)' }[
+                      classificarScore(ultimaAnalise.score_deterministico).cor
+                    ]
+                  }`}
+                >
+                  {ultimaAnalise.score_deterministico}/100
+                </span>
+                <span className="text-xs text-(--color-ink-secondary)">{classificarScore(ultimaAnalise.score_deterministico).label}</span>
+              </dd>
+            </div>
+          ) : null}
           <Campo label="Origem" valor={lead.origem?.nome} />
         </dl>
 

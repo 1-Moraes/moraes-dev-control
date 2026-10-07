@@ -3,13 +3,26 @@
 // só depois que o resultado já foi marcado como candidato — "candidato
 // selecionado deve ganhar ação [Adicionar ao CRM]", conforme o pedido.
 import { Link } from 'react-router-dom'
-import { Star, Phone, Globe, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react'
+import { Star, Phone, Globe, AlertTriangle, Loader2, CheckCircle2, Gauge } from 'lucide-react'
+
+// Cores discretas por classificação do Opportunity Score (Fase 3A) — nunca
+// um "semáforo" cobrindo o card inteiro, só um selo compacto (item explícito
+// do planejamento: "cores semânticas discretas, nunca card inteiro colorido").
+const COR_SCORE = {
+  verde: 'bg-(--color-green)/15 text-(--color-green)',
+  azul: 'bg-(--color-primary-bg) text-(--color-primary)',
+  amber: 'bg-(--color-amber)/15 text-(--color-amber)',
+  neutro: 'bg-(--color-canvas) text-(--color-ink-secondary)',
+}
 
 // `noCrm`/`crmLeadId` (Fase 2F, item "Já no CRM") são sinais DIFERENTES de
 // `candidato`: candidato é uma seleção manual desta sessão (localStorage);
 // já estar no CRM vem da reconciliação contra o Supabase real (ver
 // Prospeccao.jsx) e nunca remove o card da lista — só troca o selo/botão.
-export default function CardLead({ lead, selecionado, candidato, noCrm, crmLeadId, enviandoCrm, onClick, onVerDetalhes, onAdicionarAoCrm }) {
+//
+// `analise` (Fase 3A) é o resultado de calcularOpportunityScore() — este
+// componente só EXIBE o que já vem calculado, nunca recalcula nada.
+export default function CardLead({ lead, selecionado, candidato, noCrm, crmLeadId, enviandoCrm, analise, onClick, onVerDetalhes, onVerAnalise, onAdicionarAoCrm }) {
   return (
     <div
       onClick={onClick}
@@ -28,6 +41,21 @@ export default function CardLead({ lead, selecionado, candidato, noCrm, crmLeadI
           </span>
         ) : null}
       </div>
+
+      {analise ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onVerAnalise?.()
+          }}
+          className={`mt-1.5 flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${COR_SCORE[analise.classificacaoCor] || COR_SCORE.neutro}`}
+          title="Ver análise completa"
+        >
+          <Gauge size={11} />
+          {analise.score}/100 · {analise.classificacao}
+        </button>
+      ) : null}
 
       <p className="mt-0.5 text-xs text-(--color-ink-secondary)">
         {[lead.category, lead.neighborhood || lead.city].filter(Boolean).join(' · ')}

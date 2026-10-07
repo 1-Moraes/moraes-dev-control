@@ -1,6 +1,11 @@
 // Barra de busca do Radar — item 6 do planejamento (Segmento/Localização/
-// Quantidade/Buscar), limites conservadores de quantidade.
+// Quantidade/Buscar), limites conservadores de quantidade. Fase 3A
+// acrescenta "Buscas rápidas": chips de segmentos sugeridos (config
+// centralizada em segmentosPreset.js) que só preenchem o campo Segmento —
+// a busca livre por texto continua funcionando exatamente como antes, sem
+// nenhuma restrição a essa lista.
 import { Search } from 'lucide-react'
+import { SEGMENTOS_SUGERIDOS } from '../../lib/radar/segmentosPreset'
 
 const QUANTIDADES = [10, 20, 50]
 
@@ -11,8 +16,21 @@ export default function BarraBusca({ segmento, localizacao, quantidade, onChange
         e.preventDefault()
         onBuscar()
       }}
-      className="flex flex-col gap-3 rounded-2xl border border-(--color-line) bg-(--color-surface) p-4 shadow-sm sm:flex-row sm:items-end"
+      className="flex flex-col gap-3 rounded-2xl border border-(--color-line) bg-(--color-surface) p-4 shadow-sm"
     >
+      <div className="flex flex-wrap gap-1.5">
+        {SEGMENTOS_SUGERIDOS.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => onChange({ segmento: s })}
+            className="rounded-full border border-(--color-line) px-2.5 py-1 text-[11px] font-medium text-(--color-ink-secondary) hover:border-(--color-primary-soft) hover:text-(--color-primary)"
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
       <div className="flex-1">
         <label className="text-xs font-medium text-(--color-ink-secondary)">Segmento</label>
         <input
@@ -57,6 +75,7 @@ export default function BarraBusca({ segmento, localizacao, quantidade, onChange
         <Search size={16} />
         Buscar
       </button>
+      </div>
     </form>
   )
 }

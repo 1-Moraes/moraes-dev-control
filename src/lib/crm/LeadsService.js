@@ -240,6 +240,57 @@ export async function registrarAtividade(leadId, tipo, detalhe) {
  *
  * @returns {{ duplicata: true, leadExistente: object, sinal: string } | { duplicata: false, lead: object }}
  */
+/**
+ * Transferência de inteligência Radar → CRM (Fase 3A, item "transferência
+ * para CRM"). `leadCandidate.analise`, quando presente, é o objeto JÁ
+ * CALCULADO pelo Prospeccao.jsx (shape de calcularOpportunityScore(), ver
+ * src/lib/radar/OpportunityScore.js) — este arquivo continua, de propósito,
+ * NUNCA importando nada de src/lib/radar/ (mesma fronteira documentada no
+ * topo do arquivo): ele só recebe o resultado já pronto como dado plano e
+ * persiste, nunca recalcula nem reclassifica.
+ *
+ * @typedef {Object} AnaliseRadar
+ * @property {number} score
+ * @property {string} scoreVersion
+ * @property {Array} criterios
+ * @property {{categoria:string, detalhe:string|null, websiteSourceType:string, evidencias:Array, confirmacao:string}} presenca
+ */
+function payloadPresencaDigital(leadCandidate, usuarioId) {
+  const analise = leadCandidate.analise
+  if (!analise?.presenca) {
+    // Sem análise calculada (ex.: candidato enviado por um fluxo que ainda
+    // não passou pelo WebsiteAnalyzer) — mantém a regra original da Fase 2C:
+    // nunca inferir "não tem site" a partir de campo vazio.
+    return { website_source_type: leadCandidate.website ? 'unknown' : 'not_returned' }
+  }
+  const { presenca } = analise
+  const confirmou = presenca.confirmacao && presenca.confirmacao !== 'nao_confirmado'
+  return {
+    website_source_type: presenca.websiteSourceType,
+    website_source_detalhe: presenca.detalhe || null,
+    website_confirmacao: presenca.confirmacao || 'nao_confirmado',
+    website_confirmado_em: confirmou ? new Date().toISOString() : null,
+    website_confirmado_por: confirmou ? usuarioId : null,
+    website_url_manual: leadCandidate.siteUrlManual || null,
+    instagram_url: leadCandidate.instagramUrlManual || null,
+    facebook_url: leadCandidate.facebookUrlManual || null,
+  }
+}
+
+async function persistirAnaliseInterno(leadId, analise) {
+  if (!analise) return
+  const { error } = await supabase.from('lead_analysis').insert({
+    lead_id: leadId,
+    sinais: { criterios: analise.criterios, presenca: analise.presenca, scoreVersion: analise.scoreVersion, origem: 'radar' },
+    score_deterministico: analise.score,
+    score_final: analise.score,
+  })
+  // Falha ao persistir a análise nunca deve impedir a criação do lead em si
+  // — é um complemento, não um pré-requisito (mesma regra de resiliência já
+  // aplicada na checagem "já no CRM" do Dashboard/Prospecção).
+  if (error) console.error('[LeadsService] falha ao persistir lead_analysis', error)
+}
+
 export async function criarLeadDoRadar(leadCandidate, { forcar = false } = {}) {
   requireSupabase()
 
@@ -280,12 +331,7 @@ export async function criarLeadDoRadar(leadCandidate, { forcar = false } = {}) {
     email: leadCandidate.email || null,
     rating: leadCandidate.rating ?? null,
     quantidade_avaliacoes: leadCandidate.reviewCount ?? null,
-    // Regra explícita do item 5 do planejamento: nunca inferir
-    // "empresa não tem site" a partir de um campo vazio. Se a fonte não
-    // retornou website, o estado é "not_returned"; se retornou mas ainda
-    // não foi analisado (WebsiteAnalyzer não existe nesta fase), é
-    // "unknown" — nunca um dos dois é decidido automaticamente aqui.
-    website_source_type: leadCandidate.website ? 'unknown' : 'not_returned',
+    ...payloadPresencaDigital(leadCandidate, usuarioId),
     prioridade: 'media',
   }
 
@@ -293,8 +339,73 @@ export async function criarLeadDoRadar(leadCandidate, { forcar = false } = {}) {
   if (error) throw error
 
   await registrarAtividadeInterno(data.id, 'lead_criado', 'Lead criado a partir do Radar de Prospecção.', usuarioId)
+  await persistirAnaliseInterno(data.id, leadCandidate.analise)
 
   return { duplicata: false, lead: data }
+}
+
+/**
+ * Confirmação/correção manual de presença digital (Fase 3A) — chamada a
+ * partir do CRM (lead já persistido). Tem precedência absoluta sobre
+ * qualquer reclassificação automática futura: a UI só dispara uma nova
+ * classificação automática quando `website_confirmacao` já voltou para
+ * 'nao_confirmado' (reversão explícita, nunca implícita).
+ *
+ * @param {string} leadId
+ * @param {{confirmacao:'nao_confirmado'|'confirmado_tem'|'confirmado_nao_tem', siteUrlManual?:string, instagramUrl?:string, facebookUrl?:string, websiteSourceType?:string, websiteSourceDetalhe?:string}} patch
+ */
+export async function registrarPresencaManual(leadId, patch) {
+  requireSupabase()
+  const usuarioId = await obterUsuarioAtualId()
+  const confirmou = patch.confirmacao !== 'nao_confirmado'
+
+  const dbPatch = {
+    website_confirmacao: patch.confirmacao,
+    website_confirmado_em: confirmou ? new Date().toISOString() : null,
+    website_confirmado_por: confirmou ? usuarioId : null,
+    website_url_manual: patch.siteUrlManual ?? null,
+    instagram_url: patch.instagramUrl ?? null,
+    facebook_url: patch.facebookUrl ?? null,
+  }
+  if (patch.websiteSourceType) dbPatch.website_source_type = patch.websiteSourceType
+  if ('websiteSourceDetalhe' in patch) dbPatch.website_source_detalhe = patch.websiteSourceDetalhe ?? null
+
+  const { error } = await supabase.from('leads').update(dbPatch).eq('id', leadId)
+  if (error) throw error
+
+  const detalheAtividade =
+    patch.confirmacao === 'confirmado_nao_tem'
+      ? 'Confirmado manualmente que o negócio não possui site.'
+      : patch.confirmacao === 'confirmado_tem'
+        ? 'Confirmada/corrigida manualmente a presença digital do negócio.'
+        : 'Confirmação manual de presença digital revertida para "não confirmado".'
+  await registrarAtividadeInterno(leadId, 'presenca_digital_atualizada', detalheAtividade, usuarioId)
+}
+
+/**
+ * Persiste uma nova rodada de Opportunity Score (recálculo manual ou após
+ * correção de presença digital) na lead_analysis — nunca sobrescreve a
+ * linha anterior, cada rodada é uma linha nova (auditoria, igual ao
+ * racional original da tabela desde a Fase 0).
+ * @param {string} leadId
+ * @param {AnaliseRadar} analise
+ */
+export async function registrarNovaAnalise(leadId, analise) {
+  requireSupabase()
+  await persistirAnaliseInterno(leadId, analise)
+}
+
+export async function buscarUltimaAnalise(leadId) {
+  requireSupabase()
+  const { data, error } = await supabase
+    .from('lead_analysis')
+    .select('*')
+    .eq('lead_id', leadId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  return data
 }
 
 export async function atualizarStatus(leadId, novoStatus, { motivoPerda } = {}) {

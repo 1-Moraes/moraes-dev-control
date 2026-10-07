@@ -239,13 +239,29 @@ create table public.leads (
   whatsapp text,
   email text,
 
-  -- Fase 2C — presença digital (website_source_type nunca é inferido
-  -- automaticamente nesta fase — NÃO há WebsiteAnalyzer ainda)
+  -- Fase 2C — presença digital (website_source_type nunca foi inferido
+  -- automaticamente até a Fase 2C — a classificação de fato passou a rodar
+  -- na Fase 3A, via WebsiteAnalyzer.js)
   rating numeric,
   quantidade_avaliacoes integer,
   website_source_type text not null default 'unknown' check (
     website_source_type in ('own_domain', 'social_media', 'third_party_platform', 'unknown', 'not_returned')
   ),
+
+  -- Fase 3A — detalhe da classificação (ex.: 'instagram', 'booksy.com') e
+  -- confirmação MANUAL de presença digital, em colunas distintas das
+  -- automáticas de propósito: uma nova rodada de WebsiteAnalyzer nunca pode
+  -- sobrescrever silenciosamente uma confirmação humana (ver
+  -- src/lib/radar/WebsiteAnalyzer.js para o racional completo).
+  website_source_detalhe text,
+  website_confirmacao text not null default 'nao_confirmado' check (
+    website_confirmacao in ('nao_confirmado', 'confirmado_tem', 'confirmado_nao_tem')
+  ),
+  website_confirmado_em timestamptz,
+  website_confirmado_por uuid references public.profiles (id),
+  website_url_manual text,
+  instagram_url text,
+  facebook_url text,
 
   -- Fase 2C — comercial
   prioridade text not null default 'media' check (prioridade in ('baixa', 'media', 'alta')),
@@ -262,6 +278,7 @@ create index leads_status_idx on public.leads (status);
 create index idx_leads_origem on public.leads (origem_provider, origem_source_id);
 create index idx_leads_telefone on public.leads (telefone);
 create index idx_leads_prioridade on public.leads (prioridade);
+create index idx_leads_website_confirmacao on public.leads (website_confirmacao);
 create trigger leads_set_updated_at before update on public.leads
   for each row execute function public.set_updated_at();
 
@@ -958,6 +975,23 @@ create policy "Usuário atualiza os próprios atalhos" on public.user_shortcuts
   for update using (auth.uid() = profile_id);
 create policy "Usuário exclui os próprios atalhos" on public.user_shortcuts
   for delete using (auth.uid() = profile_id);
+
+-- ----------------------------------------------------------------------------
+-- RLS — Fase 3A (Inteligência do Radar): lead_analysis estava desde a
+-- Fase 0 com INSERT/UPDATE restritos a is_admin() (loop genérico original) —
+-- relaxados aqui pro mesmo padrão de lead_activities, porque qualquer
+-- membro provisionado roda análises/pontuações no dia a dia. DELETE continua
+-- is_admin() (histórico de análise não é excluído pela UI).
+-- ----------------------------------------------------------------------------
+alter policy "Administrador pode criar lead_analysis" on public.lead_analysis
+  rename to "Membros provisionados podem criar lead_analysis";
+alter policy "Membros provisionados podem criar lead_analysis" on public.lead_analysis
+  with check (has_any_role());
+
+alter policy "Administrador pode atualizar lead_analysis" on public.lead_analysis
+  rename to "Membros provisionados podem atualizar lead_analysis";
+alter policy "Membros provisionados podem atualizar lead_analysis" on public.lead_analysis
+  using (has_any_role());
 
 -- ============================================================================
 -- Fim do schema proposto. NÃO EXECUTAR sem: (1) projeto Supabase próprio do

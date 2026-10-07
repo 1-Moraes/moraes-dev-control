@@ -1,36 +1,58 @@
-// Radar de Prospecção — Fase 2B (MVP). Arquitetura completa:
+// Radar de Prospecção — Fase 2B (MVP), Fase 2F (Dashboard/continuidade) e
+// Fase 3A (Inteligência: WebsiteAnalyzer + Opportunity Score + busca
+// multissegmento). Arquitetura completa:
 //
 //   Prospeccao.jsx (esta tela)
-//        ↓ fetch('/api/radar-buscar')
+//        ↓ fetch('/api/radar-buscar')  (uma chamada por segmento)
 //   Radar Service/API (api/radar-buscar.js)
 //        ↓
 //   DiscoveryService → DiscoveryProvider → GoogleMapsScraperProvider
 //        ↓                                   (MODO LAB — ver o arquivo)
 //   Normalizer → Deduplicator → resultado normalizado
+//        ↓
+//   WebsiteAnalyzer (classifica presença digital) + OpportunityScore
+//   (pontua) — Fase 3A, SEM IA, 100% determinístico — ver
+//   src/lib/radar/WebsiteAnalyzer.js e OpportunityScore.js.
 //
 // Esta tela NÃO conhece o provider nem o formato bruto do scraper — só o
-// contrato JSON devolvido pelo endpoint. Troca de provider (ex.: um futuro
-// GooglePlacesProvider) não exige tocar neste arquivo.
+// contrato JSON devolvido pelo endpoint. Troca de provider não exige tocar
+// neste arquivo.
 //
 // "Resultado de busca" vs. "candidato selecionado" (item 12 do
-// planejamento): resultados ficam só em memória/estado do componente, MAS
-// a Fase 2F acrescenta um CACHE da última busca no localStorage (ver
-// CHAVE_CACHE_BUSCA abaixo) — só para não perder a última pesquisa ao
+// planejamento): resultados ficam só em memória/estado do componente, MAS a
+// Fase 2F acrescenta um CACHE da última busca no localStorage (ver
+// CHAVE_CACHE_BUSCA abaixo), expandido na Fase 3A pra também guardar
+// correções manuais de presença digital feitas num candidato ainda não
+// enviado ao CRM — só para não perder a última pesquisa/análise ao
 // recarregar a página, nunca como substituto de uma busca ao vivo.
 // "Candidatos selecionados" continuam persistindo no localStorage do
 // navegador (por sessão de quem está usando, não sincronizado entre
 // pessoas/dispositivos e NUNCA gravado no Supabase de leads/clientes nesta
 // fase — ver item 15).
+//
+// Análise (score/presença) de um candidato do Radar que AINDA não é lead no
+// CRM vive só em memória/cache deste componente — só quando o candidato é
+// efetivamente enviado ao CRM ("Adicionar ao CRM") é que a análise persiste
+// de verdade (colunas novas em `leads` + uma linha em `lead_analysis`, ver
+// LeadsService.js). Isso é uma consequência direta de `lead_analysis.lead_id`
+// ser NOT NULL — uma linha de análise não pode existir sem um lead real.
 
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Users, Loader2, CheckCircle2, History, RotateCcw, Sparkles } from 'lucide-react'
+import { Users, Loader2, CheckCircle2, History, RotateCcw, Sparkles, AlertTriangle } from 'lucide-react'
 import BarraBusca from '../components/radar/BarraBusca'
+import BuscaMultissegmentoForm from '../components/radar/BuscaMultissegmentoForm'
+import FiltrosOportunidade from '../components/radar/FiltrosOportunidade'
 import EstadoBusca from '../components/radar/EstadoBusca'
 import CardLead from '../components/radar/CardLead'
 import DrawerDetalhesLead from '../components/radar/DrawerDetalhesLead'
+import DrawerAnaliseLead from '../components/radar/DrawerAnaliseLead'
 import ModalDuplicataCrm from '../components/radar/ModalDuplicataCrm'
-import { criarLeadDoRadar, verificarDuplicatasEmLote } from '../lib/crm/LeadsService'
+import { criarLeadDoRadar, verificarDuplicatasEmLote, registrarPresencaManual, registrarNovaAnalise } from '../lib/crm/LeadsService'
+import { classificarPresencaDigital } from '../lib/radar/WebsiteAnalyzer'
+import { calcularOpportunityScore } from '../lib/radar/OpportunityScore'
+import { deduplicar } from '../lib/radar/Deduplicator'
+import { executarBuscaMultissegmento, unificarResultadosMultissegmento } from '../lib/radar/BuscaMultissegmento'
 
 // maplibre-gl é uma lib pesada (~190kB gzip) — carregada só quando a tela
 // de Prospecção de fato renderiza o mapa, via code-splitting, em vez de
@@ -40,18 +62,16 @@ const MapaResultados = lazy(() => import('../components/radar/MapaResultados'))
 const CHAVE_CANDIDATOS = 'moraes_dev_control_radar_candidatos_v1'
 
 // ----------------------------------------------------------------------------
-// Cache da última pesquisa (Fase 2F, item "continuidade da prospecção") —
-// SÓ isso: a última busca, nunca um histórico. Formato documentado:
-//   { version: 1, savedAt: <ISO>, query: {segmento,localizacao,quantidade},
-//     results: <mesmo objeto devolvido por /api/radar-buscar> }
-// TTL sugerido de 24h (item do planejamento) — passado isso, o cache ainda
-// é lido mas a UI deixa claro que pode estar desatualizado via o timestamp
-// exibido; NUNCA são salvos aqui tokens/segredos/instâncias de
-// MapLibre/nós de DOM/funções/erros técnicos — só os mesmos dados simples
-// (texto/número) que já aparecem na tela.
+// Cache da última pesquisa (Fase 2F) + correções manuais de presença digital
+// (Fase 3A) — SÓ isso: a última busca, nunca um histórico. VERSÃO 2 (Fase
+// 3A): formato ampliado para também guardar `overrides` (correções manuais
+// por lead.id, só pra candidatos ainda não enviados ao CRM) e o `modo` da
+// busca (simples|multissegmento). Um cache de versão antiga (1) ou
+// corrompido é tratado como "sem cache" e limpo silenciosamente — NUNCA
+// quebra a tela (mesma disciplina defensiva da Fase 2F, só estendida).
 // ----------------------------------------------------------------------------
-const CHAVE_CACHE_BUSCA = 'moraes_dev_control_radar_ultima_busca_v1'
-const VERSAO_CACHE_BUSCA = 1
+const CHAVE_CACHE_BUSCA = 'moraes_dev_control_radar_ultima_busca_v2'
+const VERSAO_CACHE_BUSCA = 2
 const TTL_CACHE_BUSCA_MS = 24 * 60 * 60 * 1000
 
 function carregarCacheBusca() {
@@ -59,9 +79,6 @@ function carregarCacheBusca() {
     const bruto = localStorage.getItem(CHAVE_CACHE_BUSCA)
     if (!bruto) return null
     const cache = JSON.parse(bruto)
-    // Validação defensiva — um valor corrompido, de uma versão antiga, ou
-    // faltando algum campo essencial é tratado como "sem cache", nunca
-    // deixado quebrar a tela (item explícito do planejamento).
     if (
       !cache ||
       cache.version !== VERSAO_CACHE_BUSCA ||
@@ -78,11 +95,7 @@ function carregarCacheBusca() {
       localStorage.removeItem(CHAVE_CACHE_BUSCA)
       return null
     }
-    // Mesmo passado o TTL sugerido, devolve o cache (só marcado como
-    // "antigo" — ver `expirado` abaixo) em vez de descartar silenciosamente
-    // o último resultado: quem decide se quer confiar nele é a pessoa, a
-    // UI só avisa com destaque quando passou de 24h.
-    return { ...cache, expirado: idadeMs > TTL_CACHE_BUSCA_MS }
+    return { ...cache, overrides: cache.overrides || {}, expirado: idadeMs > TTL_CACHE_BUSCA_MS }
   } catch {
     try {
       localStorage.removeItem(CHAVE_CACHE_BUSCA)
@@ -93,11 +106,11 @@ function carregarCacheBusca() {
   }
 }
 
-function salvarCacheBusca(query, results) {
+function salvarCacheBusca({ modo, query, results, overrides }) {
   try {
     localStorage.setItem(
       CHAVE_CACHE_BUSCA,
-      JSON.stringify({ version: VERSAO_CACHE_BUSCA, savedAt: new Date().toISOString(), query, results })
+      JSON.stringify({ version: VERSAO_CACHE_BUSCA, savedAt: new Date().toISOString(), modo, query, results, overrides })
     )
   } catch {
     /* localStorage indisponível (modo privado etc.) — degrada em silêncio */
@@ -107,6 +120,18 @@ function salvarCacheBusca(query, results) {
 function limparCacheBusca() {
   try {
     localStorage.removeItem(CHAVE_CACHE_BUSCA)
+  } catch {
+    /* idem */
+  }
+}
+
+// Também removemos, de propósito, a chave da versão 1 (Fase 2F) se ainda
+// existir no navegador de alguém — evita deixar lixo órfão que nunca mais é
+// lido, sem nenhum risco (era só a última busca, já substituída por este
+// novo formato).
+function limparCacheVersaoAntiga() {
+  try {
+    localStorage.removeItem('moraes_dev_control_radar_ultima_busca_v1')
   } catch {
     /* idem */
   }
@@ -137,27 +162,30 @@ const FILTROS_CRM = [
 
 export default function Prospeccao() {
   const navigate = useNavigate()
+  const [modoBusca, setModoBusca] = useState('simples') // simples|multissegmento
   const [form, setForm] = useState({ segmento: '', localizacao: '', quantidade: 20 })
   const [estado, setEstado] = useState('inicial') // inicial|buscando|normalizando|sucesso|sem_resultado|erro|bloqueio
   const [resultado, setResultado] = useState(null)
+  const [progressoMultissegmento, setProgressoMultissegmento] = useState(null) // [{segmento,status}]
   const [restauradoDoCache, setRestauradoDoCache] = useState(null) // { savedAt, expirado } | null
   const [abaMobile, setAbaMobile] = useState('lista') // lista|mapa
   const [selecionadoId, setSelecionadoId] = useState(null)
   const [leadDetalhe, setLeadDetalhe] = useState(null)
+  const [leadAnalise, setLeadAnalise] = useState(null) // lead atualmente aberto no painel "Ver análise"
+  const [salvandoPresenca, setSalvandoPresenca] = useState(false)
   const [candidatos, setCandidatos] = useState(() => carregarCandidatos())
   const [filtroCrm, setFiltroCrm] = useState('todos')
-  // Fase 2C — integração Radar → CRM (item 14 do planejamento). Nada aqui
-  // é persistido em localStorage: `leadsNoCrm` é só feedback visual da
-  // sessão atual (já existe na tabela leads no Supabase; um refresh da
-  // página volta a consultar e, se tentar adicionar de novo, a
-  // deduplicação do LeadsService pega pelo mesmo sinal "origem").
-  //
-  // Fase 2F — unifica com a reconciliação real contra o CRM: o Map abaixo
-  // guarda `radarLeadId -> idDoLeadNoSupabase` tanto para leads enviados
-  // NESTA sessão quanto para os encontrados pela checagem em lote ao
-  // carregar/restaurar resultados. O Supabase é sempre a fonte da verdade —
-  // a checagem roda de novo a cada busca/restauração, nunca confia só no
-  // cache.
+  const [filtroOportunidade, setFiltroOportunidade] = useState('todos')
+  const [ordenacao, setOrdenacao] = useState('maior_score')
+  // Correções manuais de presença digital de candidatos AINDA não enviados
+  // ao CRM — chave = lead.id (sourceId/tmp-N do Radar), valor = patch
+  // { confirmacao, siteUrlManual, instagramUrl, facebookUrl }. Persistido no
+  // mesmo cache da última busca (ver salvarCacheBusca). Uma vez enviado ao
+  // CRM, a correção passa a morar em `leads`/`lead_analysis` — ver
+  // LeadsService.criarLeadDoRadar.
+  const [overrides, setOverrides] = useState({})
+
+  // Fase 2C/2F — integração Radar → CRM, ver notas originais mantidas.
   const [crmMatches, setCrmMatches] = useState(() => new Map())
   const [verificandoCrm, setVerificandoCrm] = useState(false)
   const [enviandoCrmId, setEnviandoCrmId] = useState(null)
@@ -169,22 +197,22 @@ export default function Prospeccao() {
     salvarCandidatos(candidatos)
   }, [candidatos])
 
-  // Restaura a última pesquisa do cache SÓ na primeira renderização, e só
-  // se não há nada em andamento — nunca sobrescreve uma busca que a pessoa
-  // já tenha disparado nesta visita.
+  // Restaura a última pesquisa do cache SÓ na primeira renderização.
   useEffect(() => {
+    limparCacheVersaoAntiga()
     const cache = carregarCacheBusca()
     if (!cache) return
     // eslint-disable-next-line react-hooks/set-state-in-effect -- restaura o estado da última pesquisa a partir do localStorage, só uma vez, ao montar a tela
+    setModoBusca(cache.modo || 'simples')
     setForm(cache.query)
     setResultado(cache.results)
+    setOverrides(cache.overrides || {})
     setEstado(cache.results.resultados?.length ? 'sucesso' : 'sem_resultado')
     setRestauradoDoCache({ savedAt: cache.savedAt, expirado: cache.expirado })
   }, [])
 
-  // "Já no CRM" (Fase 2F) — reconciliação contra o Supabase real sempre que
-  // a lista de resultados muda (busca nova OU restaurada do cache). Nunca
-  // lê do cache para decidir isso — só da tabela `leads` de verdade.
+  // "Já no CRM" — reconciliação contra o Supabase real sempre que a lista
+  // de resultados muda (busca nova OU restaurada do cache).
   useEffect(() => {
     let vivo = true
     Promise.resolve()
@@ -204,9 +232,6 @@ export default function Prospeccao() {
         }
       })
       .catch(() => {
-        // Falha na checagem "já no CRM" é só perda de uma informação
-        // complementar — nunca deve impedir a visualização dos resultados
-        // do Radar (regra de resiliência também aplicada no Dashboard).
         if (vivo) setCrmMatches(new Map())
       })
       .finally(() => {
@@ -236,11 +261,25 @@ export default function Prospeccao() {
     }
   }
 
-  async function executarBusca(parametros) {
+  function aplicarResultado(modo, query, dados) {
+    if (!dados?.resultados?.length) {
+      setEstado('sem_resultado')
+      limparCacheBusca()
+      return
+    }
+    setResultado(dados)
+    setEstado('sucesso')
+    setOverrides({})
+    salvarCacheBusca({ modo, query, results: dados, overrides: {} })
+  }
+
+  async function executarBuscaSimples(parametros) {
+    setModoBusca('simples')
     setEstado('buscando')
     setResultado(null)
     setRestauradoDoCache(null)
     setSelecionadoId(null)
+    setProgressoMultissegmento(null)
 
     try {
       const resp = await fetch('/api/radar-buscar', {
@@ -250,9 +289,6 @@ export default function Prospeccao() {
       })
       const dados = await resp.json()
 
-      // Transição rápida de UI — a normalização real já ocorreu no
-      // servidor antes da resposta chegar; este estado só comunica que o
-      // resultado está sendo formatado para exibição.
       setEstado('normalizando')
       await new Promise((r) => setTimeout(r, 200))
 
@@ -264,28 +300,84 @@ export default function Prospeccao() {
         setEstado('bloqueio')
         return
       }
-      if (dados.status === 'sem_resultado' || !dados.resultados?.length) {
-        setEstado('sem_resultado')
-        limparCacheBusca()
-        return
-      }
-
-      setResultado(dados)
-      setEstado('sucesso')
-      salvarCacheBusca(parametros, dados)
+      aplicarResultado('simples', parametros, dados)
     } catch {
       setEstado('erro')
     }
   }
 
-  function buscar() {
-    return executarBusca(form)
+  // Busca multissegmento (Fase 3A) — uma chamada a /api/radar-buscar por
+  // segmento, concorrência controlada (ver BuscaMultissegmento.js), nunca
+  // todas de uma vez. Falha parcial preserva os segmentos que funcionaram.
+  async function executarBuscaMultissegmentoUI({ segmentos, localizacao, quantidade }) {
+    setModoBusca('multissegmento')
+    setEstado('buscando')
+    setResultado(null)
+    setRestauradoDoCache(null)
+    setSelecionadoId(null)
+    setProgressoMultissegmento(segmentos.map((segmento) => ({ segmento, status: 'pendente' })))
+
+    const executarUmSegmento = async (segmento) => {
+      const resp = await fetch('/api/radar-buscar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ segmento, localizacao, quantidade }),
+      })
+      const dados = await resp.json()
+      if (!resp.ok || dados.status === 'erro') throw new Error(dados.mensagemErro || 'Falha na busca deste segmento.')
+      return dados
+    }
+
+    const porSegmento = await executarBuscaMultissegmento(segmentos, executarUmSegmento, (p) => {
+      setProgressoMultissegmento((atual) => {
+        const novo = [...(atual || [])]
+        novo[p.indice] = { segmento: p.segmento, status: p.status }
+        return novo
+      })
+    })
+
+    setEstado('normalizando')
+    await new Promise((r) => setTimeout(r, 150))
+
+    const sucesso = porSegmento.filter((r) => r.status === 'sucesso')
+    if (sucesso.length === 0) {
+      setEstado('erro')
+      return
+    }
+
+    const unificados = unificarResultadosMultissegmento(porSegmento)
+    // Reusa o MESMO Deduplicator do Radar — nunca um algoritmo paralelo —
+    // pra marcar possíveis duplicatas entre segmentos diferentes (ex.: o
+    // mesmo negócio listado em "Salões de beleza" e "Clínicas de estética").
+    const { leads: dedupicados, gruposDuplicados } = deduplicar(unificados)
+
+    const cobertura = {
+      telefone: Math.round((dedupicados.filter((l) => l.phone).length / dedupicados.length) * 1000) / 10,
+      website: Math.round((dedupicados.filter((l) => l.website).length / dedupicados.length) * 1000) / 10,
+      coordenadas: Math.round((dedupicados.filter((l) => l.latitude && l.longitude).length / dedupicados.length) * 1000) / 10,
+    }
+
+    const dadosUnificados = {
+      status: 'sucesso',
+      quantidadeAposNormalizacao: dedupicados.length,
+      resultados: dedupicados,
+      gruposDuplicados,
+      cobertura,
+      segmentosComFalha: porSegmento.filter((r) => r.status === 'erro').map((r) => ({ segmento: r.segmento, erro: r.erro })),
+      segmentosOk: sucesso.length,
+      segmentosTotal: porSegmento.length,
+    }
+
+    aplicarResultado('multissegmento', { segmentos, localizacao, quantidade }, dadosUnificados)
   }
 
-  // "[Nova pesquisa]" (item do planejamento) — limpa resultados, seleção
-  // atual na tela e o cache; reseta o formulário. NUNCA apaga os
-  // `candidatos` persistidos (seleção que atravessa buscas/sessões, já
-  // documentada desde a Fase 2B) nem qualquer dado do CRM.
+  function buscar() {
+    return executarBuscaSimples(form)
+  }
+
+  // "[Nova pesquisa]" — limpa resultados, seleção atual na tela e o cache;
+  // reseta o formulário. NUNCA apaga os `candidatos` persistidos nem
+  // qualquer dado do CRM.
   function novaPesquisa() {
     setForm({ segmento: '', localizacao: '', quantidade: 20 })
     setResultado(null)
@@ -294,7 +386,20 @@ export default function Prospeccao() {
     setRestauradoDoCache(null)
     setCrmMatches(new Map())
     setFiltroCrm('todos')
+    setFiltroOportunidade('todos')
+    setOverrides({})
+    setProgressoMultissegmento(null)
     limparCacheBusca()
+  }
+
+  // "Pesquisar novamente" (item 3A: deve refazer a DESCOBERTA e a ANÁLISE,
+  // nunca só reler o cache) — refaz a mesma consulta (simples ou
+  // multissegmento) já salva no form/cache.
+  function pesquisarNovamente() {
+    if (modoBusca === 'multissegmento' && resultado) {
+      return executarBuscaMultissegmentoUI(form)
+    }
+    return executarBuscaSimples(form)
   }
 
   function alternarCandidato(leadId) {
@@ -306,12 +411,86 @@ export default function Prospeccao() {
     })
   }
 
-  const todosLeads = resultado?.resultados || []
-  const leads = todosLeads.filter((lead) => {
-    if (filtroCrm === 'no_crm') return crmMatches.has(lead.id)
-    if (filtroCrm === 'nao_enviados') return !crmMatches.has(lead.id)
-    return true
-  })
+  // Aplica a correção manual (override) a um candidato ainda não enviado ao
+  // CRM, OU persiste de verdade se o lead já está no CRM — e recalcula o
+  // score imediatamente nos dois casos (correção manual nunca espera um
+  // próximo reload pra refletir no score).
+  async function salvarPresencaManual(lead, patch) {
+    const crmLeadId = crmMatches.get(lead.id)
+    if (crmLeadId) {
+      setSalvandoPresenca(true)
+      try {
+        await registrarPresencaManual(crmLeadId, patch)
+        const presenca = classificarPresencaDigital({
+          website: lead.website,
+          siteUrlManual: patch.siteUrlManual,
+          instagramUrlManual: patch.instagramUrl,
+          facebookUrlManual: patch.facebookUrl,
+          confirmacaoManual: patch.confirmacao,
+        })
+        const novaAnalise = calcularOpportunityScore(lead, presenca)
+        await registrarNovaAnalise(crmLeadId, novaAnalise)
+      } catch {
+        setErroCrm('Não foi possível salvar a correção manual agora. Tente novamente em instantes.')
+      } finally {
+        setSalvandoPresenca(false)
+      }
+    }
+    setOverrides((atual) => {
+      const novo = {
+        ...atual,
+        [lead.id]: { confirmacao: patch.confirmacao, siteUrlManual: patch.siteUrlManual, instagramUrl: patch.instagramUrl, facebookUrl: patch.facebookUrl },
+      }
+      if (resultado) salvarCacheBusca({ modo: modoBusca, query: form, results: resultado, overrides: novo })
+      return novo
+    })
+  }
+
+  // Anexa classificação de presença + Opportunity Score a cada lead —
+  // SEMPRE recalculado aqui (nunca persistido em cache como "verdade"), a
+  // partir dos dados da busca + qualquer override manual desta sessão.
+  const leadsAnalisados = useMemo(() => {
+    const todosLeads = resultado?.resultados || []
+    return todosLeads.map((lead) => {
+      const override = overrides[lead.id]
+      const presenca = classificarPresencaDigital({
+        website: lead.website,
+        siteUrlManual: override?.siteUrlManual,
+        instagramUrlManual: override?.instagramUrl,
+        facebookUrlManual: override?.facebookUrl,
+        confirmacaoManual: override?.confirmacao || 'nao_confirmado',
+      })
+      const analise = calcularOpportunityScore(lead, presenca)
+      return { ...lead, ...override, analise }
+    })
+  }, [resultado, overrides])
+
+  const leadsFiltrados = useMemo(() => {
+    let lista = leadsAnalisados.filter((lead) => {
+      if (filtroCrm === 'no_crm') return crmMatches.has(lead.id)
+      if (filtroCrm === 'nao_enviados') return !crmMatches.has(lead.id)
+      return true
+    })
+
+    lista = lista.filter((lead) => {
+      const cat = lead.analise.presenca.categoria
+      if (filtroOportunidade === 'melhores') return lead.analise.score >= 60
+      if (filtroOportunidade === 'sem_site') return cat !== 'site_proprio_identificado'
+      if (filtroOportunidade === 'instagram_sem_site') return cat === 'rede_social_identificada'
+      return true
+    })
+
+    const porScoreDesc = (a, b) => b.analise.score - a.analise.score
+    const ordenadores = {
+      maior_score: porScoreDesc,
+      menor_score: (a, b) => a.analise.score - b.analise.score,
+      mais_avaliacoes: (a, b) => (b.reviewCount || 0) - (a.reviewCount || 0),
+      melhor_avaliacao: (a, b) => (b.rating || 0) - (a.rating || 0),
+    }
+    return [...lista].sort(ordenadores[ordenacao] || porScoreDesc)
+  }, [leadsAnalisados, filtroCrm, filtroOportunidade, ordenacao, crmMatches])
+
+  const leadAnaliseAtual = leadAnalise ? leadsAnalisados.find((l) => l.id === leadAnalise.id) : null
 
   return (
     <div className="flex flex-col gap-4">
@@ -319,7 +498,7 @@ export default function Prospeccao() {
         <div>
           <h1 className="font-display text-xl font-semibold text-(--color-ink)">Radar de Prospecção</h1>
           <p className="mt-0.5 text-sm text-(--color-ink-secondary)">
-            Busca experimental de empresas por segmento e localização, com visualização em lista e mapa.
+            Busca experimental de empresas por segmento e localização, com análise de oportunidade e visualização em lista e mapa.
           </p>
         </div>
         {estado === 'sucesso' || estado === 'sem_resultado' ? (
@@ -333,14 +512,37 @@ export default function Prospeccao() {
         ) : null}
       </div>
 
-      <BarraBusca
-        segmento={form.segmento}
-        localizacao={form.localizacao}
-        quantidade={form.quantidade}
-        onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
-        onBuscar={buscar}
-        buscando={estado === 'buscando' || estado === 'normalizando'}
-      />
+      <div className="flex gap-2">
+        {[
+          { valor: 'simples', label: 'Busca simples' },
+          { valor: 'multissegmento', label: 'Buscar vários segmentos' },
+        ].map((m) => (
+          <button
+            key={m.valor}
+            type="button"
+            onClick={() => setModoBusca(m.valor)}
+            disabled={estado === 'buscando' || estado === 'normalizando'}
+            className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition disabled:opacity-60 ${
+              modoBusca === m.valor ? 'bg-(--color-primary) text-white' : 'border border-(--color-line) text-(--color-ink-secondary)'
+            }`}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      {modoBusca === 'simples' ? (
+        <BarraBusca
+          segmento={form.segmento}
+          localizacao={form.localizacao}
+          quantidade={form.quantidade}
+          onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+          onBuscar={buscar}
+          buscando={estado === 'buscando' || estado === 'normalizando'}
+        />
+      ) : (
+        <BuscaMultissegmentoForm onBuscar={executarBuscaMultissegmentoUI} buscando={estado === 'buscando' || estado === 'normalizando'} progresso={progressoMultissegmento} />
+      )}
 
       {restauradoDoCache ? (
         <div
@@ -353,7 +555,7 @@ export default function Prospeccao() {
           <History size={13} className="shrink-0" />
           Última pesquisa restaurada ({new Date(restauradoDoCache.savedAt).toLocaleString('pt-BR')})
           {restauradoDoCache.expirado ? ' — pode estar desatualizada' : ''}.
-          <button type="button" onClick={buscar} className="ml-auto flex items-center gap-1 font-semibold text-(--color-primary) hover:underline">
+          <button type="button" onClick={pesquisarNovamente} className="ml-auto flex items-center gap-1 font-semibold text-(--color-primary) hover:underline">
             <Sparkles size={12} /> Pesquisar novamente
           </button>
         </div>
@@ -365,10 +567,14 @@ export default function Prospeccao() {
             {resultado.quantidadeAposNormalizacao} empresa{resultado.quantidadeAposNormalizacao === 1 ? '' : 's'}{' '}
             encontrada{resultado.quantidadeAposNormalizacao === 1 ? '' : 's'}.
           </span>
-          {resultado.gruposDuplicados?.length ? (
-            <span>
-              {resultado.gruposDuplicados.length} possível(is) duplicata(s) marcada(s), não removida(s).
+          {resultado.segmentosTotal ? (
+            <span className={resultado.segmentosOk < resultado.segmentosTotal ? 'font-semibold text-(--color-amber)' : ''}>
+              {resultado.segmentosOk} de {resultado.segmentosTotal} buscas concluídas
+              {resultado.segmentosComFalha?.length ? ` (falhou: ${resultado.segmentosComFalha.map((f) => f.segmento).join(', ')})` : ''}.
             </span>
+          ) : null}
+          {resultado.gruposDuplicados?.length ? (
+            <span>{resultado.gruposDuplicados.length} possível(is) duplicata(s) marcada(s), não removida(s).</span>
           ) : null}
           {resultado.cobertura ? (
             <span>
@@ -383,22 +589,19 @@ export default function Prospeccao() {
           ) : crmMatches.size > 0 ? (
             <span>{crmMatches.size} já no CRM.</span>
           ) : null}
-
-          <div className="ml-auto flex rounded-lg border border-(--color-line) bg-(--color-surface) p-0.5">
-            {FILTROS_CRM.map((f) => (
-              <button
-                key={f.valor}
-                type="button"
-                onClick={() => setFiltroCrm(f.valor)}
-                className={`rounded-md px-2 py-1 text-[11px] font-semibold ${
-                  filtroCrm === f.valor ? 'bg-(--color-primary) text-white' : 'text-(--color-ink-secondary)'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
         </div>
+      ) : null}
+
+      {estado === 'sucesso' && resultado ? (
+        <FiltrosOportunidade
+          filtroCrm={filtroCrm}
+          onFiltroCrm={setFiltroCrm}
+          filtrosCrm={FILTROS_CRM}
+          filtroOportunidade={filtroOportunidade}
+          onFiltroOportunidade={setFiltroOportunidade}
+          ordenacao={ordenacao}
+          onOrdenacao={setOrdenacao}
+        />
       ) : null}
 
       {estado !== 'sucesso' ? (
@@ -406,7 +609,7 @@ export default function Prospeccao() {
           estado={estado}
           detalhe={
             estado === 'sem_resultado'
-              ? 'Neste MVP (modo laboratório), apenas combinações já testadas na Fase 2A/2A.1 têm dados reais — tente "Barbearias"/"Cotia, SP", "Dentistas"/"Cotia, SP" ou "Restaurantes"/"Barueri, SP".'
+              ? 'Neste MVP (modo laboratório), apenas combinações já testadas têm dados reais — tente "Barbearias"/"Cotia, SP", "Dentistas"/"Cotia, SP" ou "Restaurantes"/"Barueri, SP".'
               : undefined
           }
         />
@@ -431,10 +634,11 @@ export default function Prospeccao() {
 
           <div className="grid h-[34rem] grid-cols-1 gap-4 sm:h-[38rem] sm:grid-cols-5">
             <div className={`${abaMobile === 'mapa' ? 'hidden' : ''} h-full space-y-3 overflow-y-auto sm:col-span-2 sm:block sm:pr-1`}>
-              {leads.map((lead) => (
+              {leadsFiltrados.map((lead) => (
                 <CardLead
                   key={lead.id}
                   lead={lead}
+                  analise={lead.analise}
                   selecionado={lead.id === selecionadoId}
                   candidato={candidatos.has(lead.id)}
                   noCrm={crmMatches.has(lead.id)}
@@ -442,10 +646,11 @@ export default function Prospeccao() {
                   enviandoCrm={enviandoCrmId === lead.id}
                   onClick={() => setSelecionadoId(lead.id)}
                   onVerDetalhes={() => setLeadDetalhe(lead)}
+                  onVerAnalise={() => setLeadAnalise(lead)}
                   onAdicionarAoCrm={adicionarAoCrm}
                 />
               ))}
-              {leads.length === 0 ? (
+              {leadsFiltrados.length === 0 ? (
                 <p className="rounded-xl border border-dashed border-(--color-line) px-3 py-6 text-center text-xs text-(--color-ink-secondary)">
                   Nenhum resultado neste filtro.
                 </p>
@@ -459,7 +664,10 @@ export default function Prospeccao() {
                   </div>
                 }
               >
-                <MapaResultados leads={leads} selecionadoId={selecionadoId} onSelecionar={setSelecionadoId} />
+                {/* Mapa SEMPRE reflete a mesma lista filtrada/ordenada da coluna ao
+                lado — nunca a lista completa não filtrada (consistência
+                lista/mapa pedida no planejamento). */}
+                <MapaResultados leads={leadsFiltrados} selecionadoId={selecionadoId} onSelecionar={setSelecionadoId} />
               </Suspense>
             </div>
           </div>
@@ -475,6 +683,7 @@ export default function Prospeccao() {
 
       {erroCrm ? (
         <div className="flex items-center gap-2 rounded-xl border border-(--color-danger)/30 bg-(--color-status-problema-bg) px-3 py-2 text-xs text-(--color-ink)">
+          <AlertTriangle size={14} className="shrink-0" />
           {erroCrm}
         </div>
       ) : null}
@@ -503,13 +712,20 @@ export default function Prospeccao() {
         onAdicionarAoCrm={adicionarAoCrm}
       />
 
+      <DrawerAnaliseLead
+        lead={leadAnaliseAtual}
+        analise={leadAnaliseAtual?.analise}
+        noCrm={leadAnaliseAtual ? crmMatches.has(leadAnaliseAtual.id) : false}
+        salvando={salvandoPresenca}
+        onFechar={() => setLeadAnalise(null)}
+        onSalvarPresencaManual={(patch) => leadAnaliseAtual && salvarPresencaManual(leadAnaliseAtual, patch)}
+      />
+
       <ModalDuplicataCrm
         info={duplicataInfo}
         onCancelar={() => setDuplicataInfo(null)}
         onAbrirExistente={() => {
           const existenteId = duplicataInfo.leadExistente.id
-          // Marca "já no CRM" mesmo sem criar um novo registro — o
-          // candidato do Radar já corresponde a um lead real existente.
           setCrmMatches((atual) => new Map(atual).set(duplicataInfo.lead.id, existenteId))
           setDuplicataInfo(null)
           navigate(`/dashboard/crm?lead=${existenteId}`)
