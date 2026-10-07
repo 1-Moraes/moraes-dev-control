@@ -21,11 +21,24 @@
 //     ti@ga-braslog.com.br / ti2@ga-braslog.com.br
 //   - chave de localStorage "ti_chamados_modo_escuro" → renomeada
 //
-// PLACEHOLDER DE IDENTIDADE VISUAL: não existe ainda logo/favicon do
-// Moraes.Dev Control. Em vez de inventar uma imagem, uso por ora um bloco
-// com a inicial "M" — troque pelo arquivo real assim que ele existir (ver
-// relatório da Fase 0, seção "Pendências").
+// IDENTIDADE VISUAL (Fase 0.5): logo oficial aplicada em public/brand/
+// logo-moraes-dev.png — arquivo fornecido pelo usuário, usado sem nenhuma
+// alteração de geometria/cor/proporção (só redimensionado via CSS, como
+// qualquer <img>). É um render de apresentação com glow sobre fundo escuro
+// transparente (alpha real nas bordas, confirmado por inspeção de pixel) —
+// não é um PNG "limpo" neutro que funcione bem solto sobre branco. Por isso
+// aqui ela fica dentro de um "chip" com fundo escuro (--color-ink em modo
+// claro / --color-sidebar-bg em modo escuro, que já é escuro), tanto na
+// sidebar quanto no login — assim o halo/glow da arte não aparece como uma
+// mancha acinzentada sobre a superfície clara do app. Ver relatório final
+// desta fase: pendência de uma versão "limpa" (sem glow, fundo
+// transparente neutro) para uso solto direto sobre qualquer superfície.
 //
+// Arquivo servido como estático a partir de public/brand/ (padrão Vite —
+// não se importa arquivo de public/ como módulo JS, só se referencia pelo
+// caminho absoluto a partir da raiz do site).
+const LOGO_MORAES_DEV = '/brand/logo-moraes-dev.png'
+
 // PLACEHOLDER DE RBAC: a filtragem de itens "restritos" abaixo usa um array
 // fixo de cargos só pra o menu não ficar sempre visível a qualquer perfil —
 // isso NÃO é o RBAC real (teams/roles/permissions) pedido para o projeto.
@@ -56,9 +69,11 @@ import {
   Loader2,
   KeyRound,
   UserCircle2,
+  Bell,
 } from 'lucide-react'
 import { useAuth } from '../lib/AuthContext'
 import { THEME_OPTIONS, THEME_PALETTES, THEME_PADRAO } from '../lib/helpers'
+import { PERFIL_EXIBICAO_PADRAO } from '../lib/perfilExibicaoPadrao'
 import Avatar from './Avatar'
 
 // Novo menu principal do Moraes.Dev Control (ver item 9 do planejamento).
@@ -91,13 +106,14 @@ function ConteudoSidebar({ onNavegar, cargo }) {
     <>
       <div>
         <div className="flex items-center gap-2.5 px-1">
-          {/* Placeholder de logo — ver nota no topo do arquivo */}
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/20 bg-white/10 font-display text-sm font-bold text-white">
-            M
+          {/* Logo real dentro de um chip escuro (ver nota no topo do arquivo
+              sobre o glow do arquivo fornecido) */}
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-(--color-ink) p-1 dark:bg-black/40">
+            <img src={LOGO_MORAES_DEV} alt="Moraes.Dev" className="h-full w-full object-contain" />
           </div>
           <div>
-            <p className="font-display text-sm font-bold leading-tight text-white">Moraes.Dev Control</p>
-            <p className="text-[10px] text-white/50">Painel interno</p>
+            <p className="font-display text-sm font-bold leading-tight text-(--color-sidebar-text)">Moraes.Dev Control</p>
+            <p className="text-[10px] text-(--color-sidebar-text-muted)">Painel interno</p>
           </div>
         </div>
 
@@ -110,7 +126,9 @@ function ConteudoSidebar({ onNavegar, cargo }) {
               onClick={onNavegar}
               className={({ isActive }) =>
                 `flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-semibold transition ${
-                  isActive ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5 hover:text-white'
+                  isActive
+                    ? 'bg-(--color-sidebar-active-bg) text-(--color-sidebar-active-text)'
+                    : 'text-(--color-sidebar-text-muted) hover:bg-(--color-sidebar-active-bg)/40 hover:text-(--color-sidebar-text)'
                 }`
               }
             >
@@ -122,7 +140,7 @@ function ConteudoSidebar({ onNavegar, cargo }) {
       </div>
 
       <div className="space-y-4">
-        <p className="text-center text-[9px] text-white/30">
+        <p className="text-center text-[9px] text-(--color-sidebar-text-muted)">
           © {new Date().getFullYear()} Moraes.Dev
           <br />
           Todos os direitos reservados
@@ -323,7 +341,11 @@ function BarraSuperior({ cargo }) {
 }
 
 export default function DashboardLayout() {
-  const { profile, sair, atualizarCorTema, atualizarLayoutMenu, trocarSenha } = useAuth()
+  const { profile: profileReal, sair, atualizarCorTema, atualizarLayoutMenu, trocarSenha } = useAuth()
+  // Ver src/lib/perfilExibicaoPadrao.js — só preenche nome/avatar/cargo de
+  // EXIBIÇÃO enquanto não existe Supabase real conectado (profile real
+  // sempre vence, campo a campo, assim que existir).
+  const profile = profileReal ?? PERFIL_EXIBICAO_PADRAO
   const [menuContaAberto, setMenuContaAberto] = useState(false)
   const [menuMobileAberto, setMenuMobileAberto] = useState(false)
   const [modalSenhaAberto, setModalSenhaAberto] = useState(false)
@@ -351,7 +373,7 @@ export default function DashboardLayout() {
       <div className="flex min-h-screen">
         {/* Sidebar — computador (só no layout "lateral") */}
         {(profile?.layout_menu || 'lateral') === 'lateral' && (
-          <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col justify-between overflow-y-auto bg-(--color-navy) px-5 py-6 lg:flex print:hidden">
+          <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col justify-between overflow-y-auto border-r border-(--color-sidebar-border) bg-(--color-sidebar-bg) px-5 py-6 lg:flex print:hidden">
             <ConteudoSidebar cargo={profile?.cargo} />
           </aside>
         )}
@@ -360,10 +382,10 @@ export default function DashboardLayout() {
         {menuMobileAberto && (
           <div className="fixed inset-0 z-40 lg:hidden">
             <div className="fixed inset-0 bg-black/50" onClick={() => setMenuMobileAberto(false)} />
-            <div className="fixed inset-y-0 left-0 flex w-72 flex-col justify-between overflow-y-auto bg-(--color-navy) px-5 py-6 shadow-2xl">
+            <div className="fixed inset-y-0 left-0 flex w-72 flex-col justify-between overflow-y-auto border-r border-(--color-sidebar-border) bg-(--color-sidebar-bg) px-5 py-6 shadow-2xl">
               <button
                 onClick={() => setMenuMobileAberto(false)}
-                className="absolute right-3 top-3 rounded-full p-1.5 text-white/60 hover:bg-white/10 hover:text-white"
+                className="absolute right-3 top-3 rounded-full p-1.5 text-(--color-sidebar-text-muted) hover:bg-(--color-sidebar-active-bg) hover:text-(--color-sidebar-text)"
               >
                 <X size={18} />
               </button>
@@ -391,6 +413,24 @@ export default function DashboardLayout() {
               </div>
 
               <div className="flex items-center gap-2 sm:gap-3">
+                <button
+                  onClick={() => setEscuro((v) => !v)}
+                  className="rounded-lg p-2 text-(--color-ink-secondary) hover:bg-(--color-canvas)"
+                  title={escuro ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
+                  aria-label={escuro ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
+                >
+                  {escuro ? <Sun size={18} /> : <Moon size={18} />}
+                </button>
+                {/* Sino sem contagem/dado nenhum (real ou inventado) — item
+                    15 do planejamento da Fase 0.5. Fica inerte até existir
+                    um sistema de notificações de verdade. */}
+                <button
+                  className="rounded-lg p-2 text-(--color-ink-secondary) hover:bg-(--color-canvas)"
+                  title="Notificações (em breve)"
+                  aria-label="Notificações"
+                >
+                  <Bell size={18} />
+                </button>
                 <ContaBotao
                   profile={profile}
                   escuro={escuro}

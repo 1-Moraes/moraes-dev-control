@@ -39,84 +39,110 @@
 //     uma tela de Configurações equivalente.
 
 export const THEME_OPTIONS = {
-  azul: { label: 'Azul', cor: 'var(--color-navy)', dot: '#1c4c82' },
-  amarelo: { label: 'Amarelo', cor: 'var(--color-yellow-dark)', dot: '#f2c200' },
-  cinza: { label: 'Cinza', cor: 'var(--color-charcoal)', dot: '#34363b' },
+  azul: { label: 'Azul', cor: '#2663f2', dot: '#2663f2' },
+  amarelo: { label: 'Âmbar', cor: '#b36f00', dot: '#f0a63d' },
+  cinza: { label: 'Cinza', cor: '#4a4d54', dot: '#4a4d54' },
 }
 export const THEME_PADRAO = 'azul'
 
-// Sobrescreve as variáveis de cor do app inteiro — fundo, cartões, bordas e
-// destaques — conforme a cor escolhida por quem está logado E o modo
-// claro/escuro selecionado. Como isso é aplicado via "style" inline (para a
-// cor de destaque funcionar), não dá para deixar o modo escuro sobrescrever
-// essas mesmas variáveis só via classe CSS — estilo inline sempre vence.
-// Por isso cada cor de destaque tem sua própria variante clara e escura,
-// escolhida em JavaScript conforme o modo atual.
+// Sobrescreve as variáveis de cor do app inteiro — fundo, cartões, bordas,
+// sidebar e destaques — conforme a cor escolhida por quem está logado E o
+// modo claro/escuro selecionado. Como isso é aplicado via "style" inline
+// (para a cor de destaque funcionar), não dá para deixar o modo escuro
+// sobrescrever essas mesmas variáveis só via classe CSS — estilo inline
+// sempre vence. Por isso cada cor de destaque tem sua própria variante clara
+// e escura, escolhida em JavaScript conforme o modo atual.
+//
+// "azul" é a identidade oficial Moraes.Dev (Fase 0.5, item 2 do
+// planejamento — hex exatos fornecidos: Primary #2663F2, Hover #1C4FD6,
+// Light #5A8BFF, Blue Background #E5EDFF, Neutros/Paper etc.) e é a cor
+// padrão (THEME_PADRAO). "amarelo" e "cinza" são variações herdadas da
+// Fase 0 que seguem existindo como opções de tema, mas usam a MESMA base de
+// superfície neutra oficial (fundo/cartão/borda/sidebar), só trocando a cor
+// de destaque — assim as 3 opções continuam consistentes com a identidade
+// visual nova em vez de cada uma ter sua própria paleta de cinzas antiga.
+const SUPERFICIE_CLARA = {
+  '--color-canvas': '#f7f7f8',
+  '--color-surface': '#ffffff',
+  '--color-paper': '#f7f5f2',
+  '--color-line': '#dadae0',
+  '--color-kanban': '#f7f5f2',
+  '--color-sidebar-bg': '#ffffff',
+  '--color-sidebar-border': '#dadae0',
+  '--color-sidebar-text': '#1d1d20',
+  '--color-sidebar-text-muted': '#66666f',
+}
+const SUPERFICIE_ESCURA = {
+  '--color-canvas': '#131319',
+  '--color-surface': '#1b1b23',
+  '--color-paper': '#1b1b23',
+  '--color-line': '#2e2e3c',
+  '--color-kanban': '#24242f',
+  '--color-sidebar-bg': '#1b1b23',
+  '--color-sidebar-border': '#2e2e3c',
+  '--color-sidebar-text': '#f7f7f8',
+  '--color-sidebar-text-muted': '#b6b6c4',
+}
+
 export const THEME_PALETTES = {
   azul: {
     claro: {
-      '--color-navy': '#0f2a4a',
-      '--color-navy-light': '#1c4c82',
-      '--color-teal': '#1c4c82',
-      '--color-teal-light': '#2a63a3',
-      '--color-canvas': '#f5f7fa',
-      '--color-surface': '#ffffff',
-      '--color-line': '#e2e6ec',
-      '--color-kanban': '#eef1f6',
+      ...SUPERFICIE_CLARA,
+      '--color-navy': '#2663f2',
+      '--color-navy-light': '#1c4fd6',
+      '--color-teal': '#2663f2',
+      '--color-teal-light': '#5a8bff',
+      '--color-sidebar-active-bg': '#e5edff',
+      '--color-sidebar-active-text': '#2663f2',
     },
     escuro: {
-      '--color-navy': '#1e40af',
-      '--color-navy-light': '#3b82f6',
-      '--color-teal': '#1e40af',
-      '--color-teal-light': '#3b82f6',
-      '--color-canvas': '#0d1117',
-      '--color-surface': '#161b24',
-      '--color-line': '#262c37',
-      '--color-kanban': '#1a2029',
+      ...SUPERFICIE_ESCURA,
+      '--color-navy': '#2663f2',
+      '--color-navy-light': '#5a8bff',
+      '--color-teal': '#2663f2',
+      '--color-teal-light': '#5a8bff',
+      '--color-sidebar-active-bg': '#24242f',
+      '--color-sidebar-active-text': '#5a8bff',
     },
   },
   amarelo: {
     claro: {
-      '--color-navy': '#8a6600',
-      '--color-navy-light': '#b98900',
-      '--color-teal': '#b98900',
-      '--color-teal-light': '#cf9c00',
-      '--color-canvas': '#fbf6e7',
-      '--color-surface': '#fffdf6',
-      '--color-line': '#ecdfb0',
-      '--color-kanban': '#faf0cd',
+      ...SUPERFICIE_CLARA,
+      '--color-navy': '#b36f00',
+      '--color-navy-light': '#8a5700',
+      '--color-teal': '#b36f00',
+      '--color-teal-light': '#f0a63d',
+      '--color-sidebar-active-bg': '#fdf1e0',
+      '--color-sidebar-active-text': '#b36f00',
     },
     escuro: {
-      '--color-navy': '#92400e',
-      '--color-navy-light': '#f2c200',
-      '--color-teal': '#92400e',
-      '--color-teal-light': '#f2c200',
-      '--color-canvas': '#14110a',
-      '--color-surface': '#1e1912',
-      '--color-line': '#332b1c',
-      '--color-kanban': '#241e14',
+      ...SUPERFICIE_ESCURA,
+      '--color-navy': '#f0a63d',
+      '--color-navy-light': '#ffbf63',
+      '--color-teal': '#f0a63d',
+      '--color-teal-light': '#ffbf63',
+      '--color-sidebar-active-bg': '#3a2a12',
+      '--color-sidebar-active-text': '#ffbf63',
     },
   },
   cinza: {
     claro: {
-      '--color-navy': '#292a2e',
+      ...SUPERFICIE_CLARA,
+      '--color-navy': '#34363b',
       '--color-navy-light': '#4a4d54',
       '--color-teal': '#4a4d54',
-      '--color-teal-light': '#5c5f66',
-      '--color-canvas': '#f0f0ef',
-      '--color-surface': '#ffffff',
-      '--color-line': '#dcdcda',
-      '--color-kanban': '#e8e8e6',
+      '--color-teal-light': '#66666f',
+      '--color-sidebar-active-bg': '#efece7',
+      '--color-sidebar-active-text': '#34363b',
     },
     escuro: {
-      '--color-navy': '#3f3f46',
-      '--color-navy-light': '#a1a1aa',
-      '--color-teal': '#3f3f46',
-      '--color-teal-light': '#a1a1aa',
-      '--color-canvas': '#111214',
-      '--color-surface': '#1a1c1f',
-      '--color-line': '#2c2f33',
-      '--color-kanban': '#1e2023',
+      ...SUPERFICIE_ESCURA,
+      '--color-navy': '#b6b6c4',
+      '--color-navy-light': '#f7f7f8',
+      '--color-teal': '#b6b6c4',
+      '--color-teal-light': '#f7f7f8',
+      '--color-sidebar-active-bg': '#24242f',
+      '--color-sidebar-active-text': '#f7f7f8',
     },
   },
 }
