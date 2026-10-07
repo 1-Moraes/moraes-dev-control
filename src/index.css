@@ -1,0 +1,236 @@
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+/* Ativa o modo escuro por classe (.dark em um ancestral), em vez de seguir
+   a preferência do sistema operacional. Isso permite ligar o modo escuro só
+   dentro do painel logado (aplicando a classe no DashboardLayout) — nesta
+   cópia não existe nenhuma rota pública fora dessa árvore de componentes
+   (o formulário público do projeto original não foi trazido para aqui). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Brand — branco dominante, preto/cinza estrutural, azul institucional, amarelo como destaque pontual */
+  --color-ink: #17181c;
+  --color-navy: #0f2a4a;
+  --color-navy-light: #1c4c82;
+  --color-teal: #1c4c82;
+  --color-teal-light: #2a63a3;
+  --color-yellow: #f2c200;
+  --color-yellow-dark: #8a6600;
+  --color-yellow-bg: #fff6db;
+  --color-charcoal: #34363b;
+
+  /* Surfaces */
+  --color-surface: #ffffff;
+  --color-canvas: #f8fafc;
+  --color-line: #eceef1;
+  --color-kanban: #eef0f2;
+
+  /* Sombras mais suaves e com mais "espalhamento" (estilo Linear/Notion),
+     sobrescrevendo os tokens padrão do Tailwind — afeta toda classe
+     shadow-sm / shadow-md já usada nos componentes, sem precisar editar
+     cada arquivo individualmente. */
+  --shadow-sm: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 1px -1px rgb(15 23 42 / 0.03);
+  --shadow-md: 0 4px 10px -2px rgb(15 23 42 / 0.06), 0 2px 6px -3px rgb(15 23 42 / 0.05);
+
+  /* Status semântico do funil comercial (item 12 do planejamento):
+     amarelo = início/atenção, laranja = negociação/requer ação,
+     verde = saudável/avançando, vermelho = problema/perdido.
+     Substituem as variáveis antigas (aberto/aceito/andamento/respondido/
+     finalizado/parado), que eram os 5 estágios do chamado de TI e não têm
+     mais nenhuma referência no código desta cópia. Uso pretendido: border/
+     badge/glow discreto — nunca card inteiro colorido (StatusBadge.jsx já
+     segue esse padrão). */
+  --color-status-inicio: #d97706;
+  --color-status-inicio-bg: #fef3e2;
+  --color-status-negociacao: #ea580c;
+  --color-status-negociacao-bg: #fff0e6;
+  --color-status-saudavel: #15803d;
+  --color-status-saudavel-bg: #e7f6ec;
+  --color-status-problema: #dc2626;
+  --color-status-problema-bg: #fdeaea;
+
+  --font-display: 'Lexend', sans-serif;
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+/* Paleta escura — cobre as variáveis que NÃO são controladas pela cor de
+   destaque (Azul/Amarelo/Cinza), que agora tem sua própria variante escura
+   aplicada via JavaScript em THEME_PALETTES (ver helpers.js). As variáveis de
+   fundo/superfície/borda ficam por conta daquele sistema, para não haver dois
+   lugares brigando pelo mesmo valor (estilo inline sempre venceria a classe). */
+.dark {
+  --color-ink: #e7e9ec;
+  --color-yellow: #f2c200;
+  --color-yellow-dark: #f0c94d;
+  --color-yellow-bg: #3a2f05;
+  --color-charcoal: #cbd0d6;
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.35), 0 1px 1px -1px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 10px -2px rgb(0 0 0 / 0.45), 0 2px 6px -3px rgb(0 0 0 / 0.35);
+
+  --color-status-inicio: #f0a742;
+  --color-status-inicio-bg: #3a2a12;
+  --color-status-negociacao: #f59e4a;
+  --color-status-negociacao-bg: #3a2410;
+  --color-status-saudavel: #5fd88a;
+  --color-status-saudavel-bg: #12301e;
+  --color-status-problema: #f77c7c;
+  --color-status-problema-bg: #3a1414;
+}
+
+html {
+  font-family: var(--font-sans);
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-teal);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   Estilo de leitura dos artigos da Base de Conhecimento (Markdown renderizado).
+   Pensado pra lembrar a leitura confortável de um Obsidian/Notion, mas usando
+   as cores e fontes do tema atual do sistema (respeita claro/escuro e a cor
+   de destaque escolhida — Azul/Amarelo/Cinza).
+   ---------------------------------------------------------------------------- */
+.artigo-conteudo {
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  color: var(--color-ink);
+}
+.artigo-conteudo > *:first-child {
+  margin-top: 0;
+}
+.artigo-conteudo h1,
+.artigo-conteudo h2,
+.artigo-conteudo h3,
+.artigo-conteudo h4 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--color-ink);
+  line-height: 1.3;
+}
+.artigo-conteudo h1 { font-size: 1.5rem; margin: 1.75rem 0 0.75rem; }
+.artigo-conteudo h2 { font-size: 1.25rem; margin: 1.5rem 0 0.6rem; }
+.artigo-conteudo h3 { font-size: 1.0625rem; margin: 1.25rem 0 0.5rem; }
+.artigo-conteudo h4 { font-size: 0.9375rem; margin: 1rem 0 0.4rem; }
+.artigo-conteudo p {
+  margin: 0 0 0.9rem;
+}
+.artigo-conteudo ul,
+.artigo-conteudo ol {
+  margin: 0 0 0.9rem;
+  padding-left: 1.4rem;
+}
+.artigo-conteudo ul { list-style: disc; }
+.artigo-conteudo ol { list-style: decimal; }
+.artigo-conteudo li {
+  margin: 0.25rem 0;
+}
+.artigo-conteudo li > ul,
+.artigo-conteudo li > ol {
+  margin: 0.25rem 0 0.25rem;
+}
+.artigo-conteudo strong { font-weight: 700; }
+.artigo-conteudo em { font-style: italic; }
+.artigo-conteudo a {
+  color: var(--color-navy);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.artigo-conteudo a:hover { color: var(--color-navy-light); }
+.artigo-conteudo code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--color-canvas);
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.artigo-conteudo pre {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--color-canvas);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  margin: 0 0 0.9rem;
+}
+.artigo-conteudo pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.artigo-conteudo blockquote {
+  border-left: 3px solid var(--color-teal, var(--color-navy));
+  padding-left: 0.9rem;
+  margin: 0 0 0.9rem;
+  color: var(--color-charcoal, #52606d);
+  font-style: italic;
+}
+.artigo-conteudo hr {
+  border: none;
+  border-top: 1px solid var(--color-line);
+  margin: 1.25rem 0;
+}
+.artigo-conteudo table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 0.9rem;
+  font-size: 0.875rem;
+}
+.artigo-conteudo th,
+.artigo-conteudo td {
+  border: 1px solid var(--color-line);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+.artigo-conteudo th {
+  background: var(--color-canvas);
+  font-weight: 600;
+}
+.artigo-conteudo img {
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 0.5rem 0;
+}
+
