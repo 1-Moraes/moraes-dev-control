@@ -1,7 +1,10 @@
 // Drawer lateral de detalhes do lead — itens 11, 12 e 13 do planejamento
 // da Fase 2C (seções Empresa/Comercial/Notas/Atividades + ações rápidas +
-// CNPJ.ws).
+// CNPJ.ws). O bloco "Converter em cliente" (Fase 2D) foi adicionado aqui
+// propositalmente — já existia desabilitado desde a Fase 2C, preparado
+// para esta etapa.
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   X,
   Star,
@@ -12,6 +15,8 @@ import {
   FileSearch,
   Loader2,
   Send,
+  ArrowRightCircle,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   STATUS_PIPELINE,
@@ -24,6 +29,9 @@ import {
   atualizarCampos,
   listarMembrosEquipe,
 } from '../../lib/crm/LeadsService'
+import { converterLeadEmCliente, vincularLeadAClienteExistente } from '../../lib/clients/ClientsService'
+import ModalConverterCliente from '../clients/ModalConverterCliente'
+import ModalDuplicataCliente from '../clients/ModalDuplicataCliente'
 
 function Campo({ label, valor }) {
   return (
@@ -56,6 +64,7 @@ export default function DrawerLead({ lead, onFechar, onMoverStatus, onLeadAtuali
 }
 
 function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado }) {
+  const navigate = useNavigate()
   const [notas, setNotas] = useState([])
   const [atividades, setAtividades] = useState([])
   const [equipe, setEquipe] = useState([])
@@ -63,6 +72,10 @@ function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado })
   const [novaNota, setNovaNota] = useState('')
   const [enviandoNota, setEnviandoNota] = useState(false)
   const [salvandoComercial, setSalvandoComercial] = useState(false)
+  const [modalConverterAberto, setModalConverterAberto] = useState(false)
+  const [duplicataCliente, setDuplicataCliente] = useState(null)
+  const [clienteConvertido, setClienteConvertido] = useState(null)
+  const [erroConversao, setErroConversao] = useState(null)
   const [comercial, setComercial] = useState(() => ({
     prioridade: lead.prioridade || 'media',
     responsavel_id: lead.responsavel_id || '',
@@ -132,6 +145,40 @@ function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado })
     }
   }
 
+  // Converter em cliente (Fase 2D, itens 5-9) — só chega aqui com
+  // lead.status === 'ganho' (botão só aparece nesse caso). Idempotência e
+  // deduplicação ficam no ClientsService; aqui só reage aos 3 resultados
+  // possíveis.
+  async function confirmarConversao(dadosRevisados) {
+    setErroConversao(null)
+    try {
+      const resultado = await converterLeadEmCliente(lead, dadosRevisados)
+      setModalConverterAberto(false)
+      if (resultado.duplicata) {
+        setDuplicataCliente(resultado)
+        return
+      }
+      setClienteConvertido(resultado.cliente)
+      const a = await listarAtividades(lead.id)
+      setAtividades(a)
+    } catch (e) {
+      setErroConversao(e?.message || 'Não foi possível converter o lead em cliente.')
+    }
+  }
+
+  async function usarClienteExistente() {
+    const cliente = duplicataCliente.clienteExistente
+    setDuplicataCliente(null)
+    try {
+      await vincularLeadAClienteExistente(lead, cliente)
+      setClienteConvertido(cliente)
+      const a = await listarAtividades(lead.id)
+      setAtividades(a)
+    } catch (e) {
+      setErroConversao(e?.message || 'Não foi possível vincular o lead ao cliente existente.')
+    }
+  }
+
   const linkWhatsapp = telefoneParaWhatsapp(lead.telefone)
   const linkGoogle = `https://www.google.com/search?q=${encodeURIComponent([lead.nome_empresa, lead.cidade].filter(Boolean).join(' '))}`
   const linkCnpjWs = `https://cnpj.ws/busca?q=${encodeURIComponent(lead.nome_empresa || '')}`
@@ -164,12 +211,42 @@ function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado })
               </option>
             ))}
           </select>
-          {lead.status === 'ganho' ? (
+          {clienteConvertido ? (
+            <div className="mt-2 rounded-lg border border-(--color-green-light) bg-(--color-green-light)/15 px-3 py-2 text-xs text-(--color-ink)">
+              Cliente criado com sucesso.
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate(`/dashboard/clientes?cliente=${clienteConvertido.id}`)}
+                  className="rounded-lg border border-(--color-line) bg-(--color-surface) px-2.5 py-1 text-[11px] font-semibold text-(--color-ink) hover:bg-(--color-canvas)"
+                >
+                  Abrir cliente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/dashboard/clientes?cliente=${clienteConvertido.id}&criarProjeto=1`)}
+                  className="rounded-lg bg-(--color-primary) px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-(--color-primary-hover)"
+                >
+                  Criar projeto
+                </button>
+              </div>
+            </div>
+          ) : lead.status === 'ganho' ? (
             <div className="mt-2 rounded-lg border border-(--color-green-light) bg-(--color-green-light)/15 px-3 py-2 text-xs text-(--color-ink)">
               Lead marcado como ganho.
-              <button type="button" disabled className="ml-2 cursor-not-allowed font-semibold text-(--color-primary) opacity-60" title="Entra em uma fase futura">
-                Converter em cliente
+              <button
+                type="button"
+                onClick={() => setModalConverterAberto(true)}
+                className="ml-2 inline-flex items-center gap-1 font-semibold text-(--color-primary) hover:underline"
+              >
+                Converter em cliente <ArrowRightCircle size={13} />
               </button>
+            </div>
+          ) : null}
+          {erroConversao ? (
+            <div className="mt-2 flex items-center gap-2 rounded-lg border border-(--color-danger)/30 bg-(--color-status-problema-bg) px-3 py-2 text-xs text-(--color-ink)">
+              <AlertTriangle size={13} className="shrink-0 text-(--color-danger)" />
+              {erroConversao}
             </div>
           ) : null}
           {lead.status === 'perdido' && lead.motivo_perda ? (
@@ -385,6 +462,22 @@ function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado })
           {!carregando && atividades.length === 0 ? <p className="text-xs text-(--color-ink-secondary)">Nenhuma atividade registrada.</p> : null}
         </div>
       </div>
+
+      <ModalConverterCliente
+        lead={modalConverterAberto ? lead : null}
+        onCancelar={() => setModalConverterAberto(false)}
+        onConfirmar={confirmarConversao}
+      />
+
+      <ModalDuplicataCliente
+        info={duplicataCliente}
+        onCancelar={() => setDuplicataCliente(null)}
+        onAbrirExistente={() => {
+          navigate(`/dashboard/clientes?cliente=${duplicataCliente.clienteExistente.id}`)
+          setDuplicataCliente(null)
+        }}
+        onUsarEsteCliente={usarClienteExistente}
+      />
     </div>
   )
 }

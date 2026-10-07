@@ -325,13 +325,37 @@ create table public.clients (
   nome_empresa text not null,
   lead_id uuid references public.leads (id), -- rastreabilidade: de qual lead este cliente veio (item 20)
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  -- Fase 2D — ver migration 0003_fase_2d_clientes_projetos.sql
+  segmento text,
+  status text not null default 'ativo' check (status in ('ativo', 'inativo', 'arquivado')),
+  origem text, -- 'lead' (conversão) ou 'manual' (cadastro direto) — item 13
+  telefone text,
+  whatsapp text,
+  email text,
+  website text,
+  endereco text,
+  bairro text,
+  cidade text,
+  estado text,
+  cep text,
+  responsavel_id uuid references public.profiles (id),
+  observacoes text,
+  data_inicio_relacionamento date not null default current_date,
+  ultimo_contato_em timestamptz
 );
 
 create trigger clients_set_updated_at before update on public.clients
   for each row execute function public.set_updated_at();
 
+-- Idempotência da conversão Lead → Cliente (item 8): um lead nunca pode
+-- originar mais de um cliente.
+create unique index clients_lead_id_unico on public.clients (lead_id) where lead_id is not null;
+create index idx_clients_status on public.clients (status);
+create index idx_clients_responsavel on public.clients (responsavel_id);
+
 alter table public.contacts add constraint contacts_client_id_fkey foreign key (client_id) references public.clients (id) on delete set null;
+create index idx_contacts_client_id on public.contacts (client_id);
 
 -- ----------------------------------------------------------------------------
 -- PROJETOS
@@ -340,13 +364,32 @@ create table public.projects (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients (id) on delete cascade,
   nome text not null,
-  status text not null default 'planejamento',
+  -- Fase 2D: status inicial passou a ser 'contratado' (criação do projeto
+  -- nesta fase). A gestão operacional completa (Kanban, tarefas) é Fase 2E.
+  status text not null default 'contratado' check (status in (
+    'contratado', 'briefing', 'planejamento', 'design', 'desenvolvimento',
+    'homologacao', 'ajustes', 'publicacao', 'finalizado', 'pausado', 'cancelado'
+  )),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  -- Fase 2D — ver migration 0003_fase_2d_clientes_projetos.sql
+  origin_lead_id uuid references public.leads (id),
+  service_id uuid references public.services (id),
+  prioridade text not null default 'media' check (prioridade in ('baixa', 'media', 'alta')),
+  responsavel_id uuid references public.profiles (id),
+  data_inicio date,
+  prazo_previsto date,
+  valor_contratado numeric(12, 2),
+  descricao text,
+  observacoes text
 );
 
 create trigger projects_set_updated_at before update on public.projects
   for each row execute function public.set_updated_at();
+
+create index idx_projects_client_id on public.projects (client_id);
+create index idx_projects_origin_lead_id on public.projects (origin_lead_id);
+create index idx_projects_status on public.projects (status);
 
 create table public.project_tasks (
   id uuid primary key default gen_random_uuid(),
@@ -380,6 +423,8 @@ create table public.project_activities (
   created_at timestamptz not null default now()
 );
 
+create index idx_project_activities_project_id on public.project_activities (project_id);
+
 -- ----------------------------------------------------------------------------
 -- COMERCIAL (propostas, vendas, pagamentos)
 -- ----------------------------------------------------------------------------
@@ -387,9 +432,25 @@ create table public.services (
   id uuid primary key default gen_random_uuid(),
   nome text not null,
   descricao text,
-  preco_base numeric(12, 2),
+  preco_base numeric(12, 2), -- nunca hardcodado no código (item 26/27)
   created_at timestamptz not null default now()
 );
+
+-- Fase 2D — catálogo mínimo (seed idempotente via "where not exists", ver
+-- migration 0003_fase_2d_clientes_projetos.sql). Sem preço: os valores
+-- comerciais da Moraes.Dev variam.
+insert into public.services (nome, descricao)
+select v.nome, v.descricao
+from (values
+  ('Landing Page', 'Página única de conversão/captura'),
+  ('Site Institucional', 'Site multi-página para apresentar a empresa'),
+  ('Redesign', 'Reformulação visual/técnica de um site ou sistema existente'),
+  ('Sistema Web', 'Aplicação web sob medida'),
+  ('CRM / Sistema Personalizado', 'Sistema de gestão/CRM sob medida'),
+  ('Manutenção', 'Suporte e manutenção contínua'),
+  ('Outro', 'Serviço fora do catálogo padrão')
+) as v(nome, descricao)
+where not exists (select 1 from public.services s where s.nome = v.nome);
 
 create table public.proposals (
   id uuid primary key default gen_random_uuid(),
@@ -695,6 +756,54 @@ alter policy "Administrador pode atualizar lead_activities" on public.lead_activ
   rename to "Membros provisionados podem atualizar lead_activities";
 alter policy "Membros provisionados podem atualizar lead_activities" on public.lead_activities
   using (has_any_role());
+
+-- ----------------------------------------------------------------------------
+-- RLS — Fase 2D (Clientes/Projetos): mesma lógica da Fase 2C — qualquer
+-- membro provisionado pode criar/atualizar clients/contacts/projects e criar
+-- project_activities/audit_logs, não só Administrador — ver migration
+-- 0003_fase_2d_clientes_projetos.sql. DELETE continua is_admin() em todas;
+-- UPDATE de project_activities e audit_logs também continua is_admin()
+-- (registros de histórico/auditoria, não editados pela UI).
+-- ----------------------------------------------------------------------------
+alter policy "Administrador pode criar clients" on public.clients
+  rename to "Membros provisionados podem criar clients";
+alter policy "Membros provisionados podem criar clients" on public.clients
+  with check (has_any_role());
+
+alter policy "Administrador pode atualizar clients" on public.clients
+  rename to "Membros provisionados podem atualizar clients";
+alter policy "Membros provisionados podem atualizar clients" on public.clients
+  using (has_any_role());
+
+alter policy "Administrador pode criar contacts" on public.contacts
+  rename to "Membros provisionados podem criar contacts";
+alter policy "Membros provisionados podem criar contacts" on public.contacts
+  with check (has_any_role());
+
+alter policy "Administrador pode atualizar contacts" on public.contacts
+  rename to "Membros provisionados podem atualizar contacts";
+alter policy "Membros provisionados podem atualizar contacts" on public.contacts
+  using (has_any_role());
+
+alter policy "Administrador pode criar projects" on public.projects
+  rename to "Membros provisionados podem criar projects";
+alter policy "Membros provisionados podem criar projects" on public.projects
+  with check (has_any_role());
+
+alter policy "Administrador pode atualizar projects" on public.projects
+  rename to "Membros provisionados podem atualizar projects";
+alter policy "Membros provisionados podem atualizar projects" on public.projects
+  using (has_any_role());
+
+alter policy "Administrador pode criar project_activities" on public.project_activities
+  rename to "Membros provisionados podem criar project_activities";
+alter policy "Membros provisionados podem criar project_activities" on public.project_activities
+  with check (has_any_role());
+
+alter policy "Administrador pode criar audit_logs" on public.audit_logs
+  rename to "Membros provisionados podem criar audit_logs";
+alter policy "Membros provisionados podem criar audit_logs" on public.audit_logs
+  with check (has_any_role());
 
 -- ============================================================================
 -- Fim do schema proposto. NÃO EXECUTAR sem: (1) projeto Supabase próprio do
