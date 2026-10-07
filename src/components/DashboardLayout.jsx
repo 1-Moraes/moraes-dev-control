@@ -39,6 +39,17 @@
 // caminho absoluto a partir da raiz do site).
 const LOGO_MORAES_DEV = '/brand/logo-moraes-dev.png'
 
+// Ajuste visual do header (ver relatório da correção de branding): logo
+// horizontal completo oficial (MD + "Moraes.dev"), fundo transparente de
+// verdade (alpha real, confirmado por inspeção de pixel), usado como está
+// — sem recriar em HTML/texto, sem alterar cores, sem fundo/caixa atrás.
+// public/brand/logo-moraes-dev-simbolo.png é um recorte EXATO (mesmos
+// pixels, sem distorção/recolorização) só do símbolo "MD" desse mesmo
+// arquivo, usado apenas como fallback compacto em telas muito estreitas
+// (item 7 do pedido) — nunca substitui o logo horizontal no desktop/tablet.
+const LOGO_HEADER_HORIZONTAL = '/brand/logo-moraes-dev-horizontal.png'
+const LOGO_HEADER_SIMBOLO = '/brand/logo-moraes-dev-simbolo.png'
+
 // PLACEHOLDER DE RBAC: a filtragem de itens "restritos" abaixo usa um array
 // fixo de cargos só pra o menu não ficar sempre visível a qualquer perfil —
 // isso NÃO é o RBAC real (teams/roles/permissions) pedido para o projeto.
@@ -397,7 +408,14 @@ export default function DashboardLayout() {
         {/* Coluna principal */}
         <div className="flex flex-1 flex-col">
           <header className="sticky top-0 z-20 border-b border-(--color-line) bg-(--color-surface)/95 backdrop-blur print:hidden">
-            <div className="flex items-center justify-between gap-3 px-4 py-3.5 sm:gap-4 sm:px-5">
+            {/* "Moraes.Dev Control" / "Painel interno" (identidade do PRODUTO)
+                já fica na sidebar — aqui no header o foco passa a ser a MARCA,
+                o logo horizontal completo, geometricamente centralizado em
+                relação ao header inteiro (não aos elementos vizinhos), pra
+                nunca ser empurrado pelas ações da direita. `relative` neste
+                container + `absolute inset-0` no logo é o que garante isso,
+                independente da largura do que existe nos dois lados. */}
+            <div className="relative flex items-center justify-between gap-3 px-4 py-4 sm:gap-4 sm:px-5">
               <div className="flex items-center gap-2.5">
                 <button
                   onClick={() => setMenuMobileAberto(true)}
@@ -406,10 +424,18 @@ export default function DashboardLayout() {
                 >
                   <Menu size={20} />
                 </button>
-                <div>
-                  <h1 className="font-display text-sm font-bold leading-tight text-(--color-ink)">Moraes.Dev Control</h1>
-                  <p className="hidden text-[11px] text-slate-400 sm:block">Painel interno</p>
-                </div>
+              </div>
+
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                {/* Desktop/tablet: logo horizontal completo (reduzido um
+                    pouco no tablet). Mobile (<sm): só o símbolo "MD", pra
+                    nunca colidir com o menu/tema/sino/avatar dos lados. */}
+                <img
+                  src={LOGO_HEADER_HORIZONTAL}
+                  alt="Moraes.Dev"
+                  className="hidden h-9 w-auto object-contain sm:block lg:h-11"
+                />
+                <img src={LOGO_HEADER_SIMBOLO} alt="Moraes.Dev" className="h-7 w-auto object-contain sm:hidden" />
               </div>
 
               <div className="flex items-center gap-2 sm:gap-3">
