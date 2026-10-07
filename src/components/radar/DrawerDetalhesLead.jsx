@@ -1,5 +1,9 @@
-// Drawer/painel lateral de detalhes do lead — item 11 do planejamento.
-import { X, Star, ExternalLink, AlertTriangle } from 'lucide-react'
+// Drawer/painel lateral de detalhes do lead — item 11 do planejamento da
+// Fase 2B. [Adicionar ao CRM] (item 14 da Fase 2C) foi adicionado aqui —
+// a ação de persistir o lead no Supabase mora em LeadsService, chamada
+// pelo Prospeccao.jsx (que também controla loading/confirmação/duplicata),
+// nunca direto neste componente de apresentação.
+import { X, Star, ExternalLink, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react'
 
 function Campo({ label, valor }) {
   return (
@@ -10,7 +14,7 @@ function Campo({ label, valor }) {
   )
 }
 
-export default function DrawerDetalhesLead({ lead, candidato, onFechar, onSelecionarCandidato }) {
+export default function DrawerDetalhesLead({ lead, candidato, onFechar, onSelecionarCandidato, noCrm, enviandoCrm, onAdicionarAoCrm }) {
   if (!lead) return null
 
   return (
@@ -87,6 +91,29 @@ export default function DrawerDetalhesLead({ lead, candidato, onFechar, onSeleci
           <p className="text-center text-[11px] text-(--color-ink-secondary)">
             Selecionar não cria lead no CRM — só marca interesse para análise posterior.
           </p>
+
+          <button
+            type="button"
+            onClick={() => onAdicionarAoCrm?.(lead)}
+            disabled={noCrm || enviandoCrm}
+            className={`flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              noCrm
+                ? 'cursor-default bg-(--color-green)/15 text-(--color-green)'
+                : 'border border-(--color-primary) text-(--color-primary) hover:bg-(--color-primary-bg) disabled:opacity-60'
+            }`}
+          >
+            {enviandoCrm ? (
+              <>
+                <Loader2 size={14} className="animate-spin" /> Adicionando...
+              </>
+            ) : noCrm ? (
+              <>
+                <CheckCircle2 size={14} /> Adicionado ao CRM
+              </>
+            ) : (
+              'Adicionar ao CRM'
+            )}
+          </button>
         </div>
       </div>
     </div>

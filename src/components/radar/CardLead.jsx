@@ -1,7 +1,10 @@
-// Card de resultado de busca na lista do Radar — item 8 do planejamento.
-import { Star, Phone, Globe, AlertTriangle } from 'lucide-react'
+// Card de resultado de busca na lista do Radar — item 8 do planejamento
+// da Fase 2B. Botão [Adicionar ao CRM] (item 14 da Fase 2C) aparece aqui
+// só depois que o resultado já foi marcado como candidato — "candidato
+// selecionado deve ganhar ação [Adicionar ao CRM]", conforme o pedido.
+import { Star, Phone, Globe, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react'
 
-export default function CardLead({ lead, selecionado, candidato, onClick, onVerDetalhes }) {
+export default function CardLead({ lead, selecionado, candidato, noCrm, enviandoCrm, onClick, onVerDetalhes, onAdicionarAoCrm }) {
   return (
     <div
       onClick={onClick}
@@ -65,6 +68,34 @@ export default function CardLead({ lead, selecionado, candidato, onClick, onVerD
           </span>
         ) : null}
       </div>
+
+      {candidato ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onAdicionarAoCrm?.(lead)
+          }}
+          disabled={noCrm || enviandoCrm}
+          className={`mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+            noCrm
+              ? 'cursor-default bg-(--color-green)/15 text-(--color-green)'
+              : 'border border-(--color-primary) text-(--color-primary) hover:bg-(--color-primary-bg) disabled:opacity-60'
+          }`}
+        >
+          {enviandoCrm ? (
+            <>
+              <Loader2 size={12} className="animate-spin" /> Adicionando...
+            </>
+          ) : noCrm ? (
+            <>
+              <CheckCircle2 size={12} /> Adicionado ao CRM
+            </>
+          ) : (
+            'Adicionar ao CRM'
+          )}
+        </button>
+      ) : null}
     </div>
   )
 }

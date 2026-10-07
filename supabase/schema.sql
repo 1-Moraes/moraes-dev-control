@@ -201,6 +201,9 @@ create table public.lead_sources (
 );
 
 -- Pipeline de 9 estágios do item 10 do planejamento.
+-- Campos abaixo da linha "-- Fase 2C" foram adicionados pela migration
+-- 0002_fase_2c_crm_leads.sql (CRM / Leads + integração com Radar) — ver
+-- esse arquivo para o racional de cada bloco.
 create table public.leads (
   id uuid primary key default gen_random_uuid(),
   nome_empresa text not null,
@@ -212,10 +215,53 @@ create table public.leads (
   responsavel_id uuid references public.profiles (id),
   motivo_perda text, -- preenchido só quando status = 'perdido'
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+
+  -- Fase 2C — identidade
+  nome_fantasia text,
+  categoria text,
+  -- origem (provider + id externo) é a chave #1 de deduplicação do Radar,
+  -- distinta de lead_source_id (classificação humana em lead_sources).
+  origem_provider text,
+  origem_source_id text,
+  descoberto_em timestamptz not null default now(),
+
+  -- Fase 2C — localização
+  endereco text,
+  bairro text,
+  cidade text,
+  estado text,
+  latitude double precision,
+  longitude double precision,
+
+  -- Fase 2C — contato comercial
+  telefone text,
+  whatsapp text,
+  email text,
+
+  -- Fase 2C — presença digital (website_source_type nunca é inferido
+  -- automaticamente nesta fase — NÃO há WebsiteAnalyzer ainda)
+  rating numeric,
+  quantidade_avaliacoes integer,
+  website_source_type text not null default 'unknown' check (
+    website_source_type in ('own_domain', 'social_media', 'third_party_platform', 'unknown', 'not_returned')
+  ),
+
+  -- Fase 2C — comercial
+  prioridade text not null default 'media' check (prioridade in ('baixa', 'media', 'alta')),
+  servico_interesse text,
+  observacoes text,
+  proxima_acao_tipo text check (
+    proxima_acao_tipo is null or proxima_acao_tipo in ('whatsapp', 'ligacao', 'follow_up', 'reuniao', 'proposta', 'outro')
+  ),
+  proxima_acao_data timestamptz,
+  proxima_acao_descricao text
 );
 
 create index leads_status_idx on public.leads (status);
+create index idx_leads_origem on public.leads (origem_provider, origem_source_id);
+create index idx_leads_telefone on public.leads (telefone);
+create index idx_leads_prioridade on public.leads (prioridade);
 create trigger leads_set_updated_at before update on public.leads
   for each row execute function public.set_updated_at();
 
@@ -612,6 +658,43 @@ create policy "Membros provisionados podem ver RBAC" on public.roles for select 
 create policy "Membros provisionados podem ver RBAC" on public.permissions for select to authenticated using (public.has_any_role());
 create policy "Membros provisionados podem ver RBAC" on public.role_permissions for select to authenticated using (public.has_any_role());
 create policy "Membros provisionados podem ver RBAC" on public.user_roles for select to authenticated using (public.has_any_role());
+
+-- ----------------------------------------------------------------------------
+-- RLS — Fase 2C (CRM / Leads): qualquer membro provisionado pode criar e
+-- atualizar leads/notas/atividades, não só Administrador — ver migration
+-- 0002_fase_2c_crm_leads.sql para o racional completo. DELETE continua
+-- is_admin() (herdado do loop acima, sem alteração: leads não são
+-- excluídos pela UI, só movidos para PERDIDO).
+-- ----------------------------------------------------------------------------
+alter policy "Administrador pode criar leads" on public.leads
+  rename to "Membros provisionados podem criar leads";
+alter policy "Membros provisionados podem criar leads" on public.leads
+  with check (has_any_role());
+
+alter policy "Administrador pode atualizar leads" on public.leads
+  rename to "Membros provisionados podem atualizar leads";
+alter policy "Membros provisionados podem atualizar leads" on public.leads
+  using (has_any_role());
+
+alter policy "Administrador pode criar lead_notes" on public.lead_notes
+  rename to "Membros provisionados podem criar lead_notes";
+alter policy "Membros provisionados podem criar lead_notes" on public.lead_notes
+  with check (has_any_role());
+
+alter policy "Administrador pode atualizar lead_notes" on public.lead_notes
+  rename to "Membros provisionados podem atualizar lead_notes";
+alter policy "Membros provisionados podem atualizar lead_notes" on public.lead_notes
+  using (has_any_role());
+
+alter policy "Administrador pode criar lead_activities" on public.lead_activities
+  rename to "Membros provisionados podem criar lead_activities";
+alter policy "Membros provisionados podem criar lead_activities" on public.lead_activities
+  with check (has_any_role());
+
+alter policy "Administrador pode atualizar lead_activities" on public.lead_activities
+  rename to "Membros provisionados podem atualizar lead_activities";
+alter policy "Membros provisionados podem atualizar lead_activities" on public.lead_activities
+  using (has_any_role());
 
 -- ============================================================================
 -- Fim do schema proposto. NÃO EXECUTAR sem: (1) projeto Supabase próprio do

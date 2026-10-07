@@ -20,11 +20,14 @@
 // gravado no Supabase de leads/clientes nesta fase — ver item 15).
 
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Users, Loader2 } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { Users, Loader2, CheckCircle2 } from 'lucide-react'
 import BarraBusca from '../components/radar/BarraBusca'
 import EstadoBusca from '../components/radar/EstadoBusca'
 import CardLead from '../components/radar/CardLead'
 import DrawerDetalhesLead from '../components/radar/DrawerDetalhesLead'
+import ModalDuplicataCrm from '../components/radar/ModalDuplicataCrm'
+import { criarLeadDoRadar } from '../lib/crm/LeadsService'
 
 // maplibre-gl é uma lib pesada (~190kB gzip) — carregada só quando a tela
 // de Prospecção de fato renderiza o mapa, via code-splitting, em vez de
@@ -51,6 +54,7 @@ function salvarCandidatos(set) {
 }
 
 export default function Prospeccao() {
+  const navigate = useNavigate()
   const [form, setForm] = useState({ segmento: '', localizacao: '', quantidade: 20 })
   const [estado, setEstado] = useState('inicial') // inicial|buscando|normalizando|sucesso|sem_resultado|erro|bloqueio
   const [resultado, setResultado] = useState(null)
@@ -58,10 +62,39 @@ export default function Prospeccao() {
   const [selecionadoId, setSelecionadoId] = useState(null)
   const [leadDetalhe, setLeadDetalhe] = useState(null)
   const [candidatos, setCandidatos] = useState(() => carregarCandidatos())
+  // Fase 2C — integração Radar → CRM (item 14 do planejamento). Nada aqui
+  // é persistido em localStorage: `leadsNoCrm` é só feedback visual da
+  // sessão atual (já existe na tabela leads no Supabase; um refresh da
+  // página volta a consultar e, se tentar adicionar de novo, a
+  // deduplicação do LeadsService pega pelo mesmo sinal "origem").
+  const [leadsNoCrm, setLeadsNoCrm] = useState(() => new Set())
+  const [enviandoCrmId, setEnviandoCrmId] = useState(null)
+  const [duplicataInfo, setDuplicataInfo] = useState(null) // { lead, leadExistente, sinal }
+  const [confirmacaoCrm, setConfirmacaoCrm] = useState(null) // { leadId, leadCriadoId }
+  const [erroCrm, setErroCrm] = useState(null)
 
   useEffect(() => {
     salvarCandidatos(candidatos)
   }, [candidatos])
+
+  async function adicionarAoCrm(lead, { forcar = false } = {}) {
+    setErroCrm(null)
+    setEnviandoCrmId(lead.id)
+    try {
+      const resultado = await criarLeadDoRadar(lead, { forcar })
+      if (resultado.duplicata) {
+        setDuplicataInfo({ lead, leadExistente: resultado.leadExistente, sinal: resultado.sinal })
+        return
+      }
+      setDuplicataInfo(null)
+      setLeadsNoCrm((atual) => new Set(atual).add(lead.id))
+      setConfirmacaoCrm({ leadId: lead.id, leadCriadoId: resultado.lead.id })
+    } catch {
+      setErroCrm('Não foi possível adicionar este lead ao CRM agora. Tente novamente em instantes.')
+    } finally {
+      setEnviandoCrmId(null)
+    }
+  }
 
   async function buscar() {
     setEstado('buscando')
@@ -187,8 +220,11 @@ export default function Prospeccao() {
                   lead={lead}
                   selecionado={lead.id === selecionadoId}
                   candidato={candidatos.has(lead.id)}
+                  noCrm={leadsNoCrm.has(lead.id)}
+                  enviandoCrm={enviandoCrmId === lead.id}
                   onClick={() => setSelecionadoId(lead.id)}
                   onVerDetalhes={() => setLeadDetalhe(lead)}
+                  onAdicionarAoCrm={adicionarAoCrm}
                 />
               ))}
             </div>
@@ -210,15 +246,52 @@ export default function Prospeccao() {
       {candidatos.size > 0 ? (
         <div className="flex items-center gap-2 rounded-xl border border-(--color-line) bg-(--color-canvas) px-3 py-2 text-xs text-(--color-ink-secondary)">
           <Users size={14} />
-          {candidatos.size} candidato(s) selecionado(s) nesta sessão — ainda não enviados ao CRM.
+          {candidatos.size} candidato(s) selecionado(s) nesta sessão — use "Adicionar ao CRM" em cada card para persistir.
+        </div>
+      ) : null}
+
+      {erroCrm ? (
+        <div className="flex items-center gap-2 rounded-xl border border-(--color-danger)/30 bg-(--color-status-problema-bg) px-3 py-2 text-xs text-(--color-ink)">
+          {erroCrm}
+        </div>
+      ) : null}
+
+      {confirmacaoCrm ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-(--color-green-light) bg-(--color-green-light)/15 px-3 py-2 text-xs text-(--color-ink)">
+          <CheckCircle2 size={14} className="shrink-0 text-(--color-green)" />
+          Lead adicionado ao CRM.
+          <Link to={`/dashboard/crm?lead=${confirmacaoCrm.leadCriadoId}`} className="font-semibold text-(--color-primary) hover:underline">
+            Abrir no CRM
+          </Link>
+          <button type="button" onClick={() => setConfirmacaoCrm(null)} className="ml-auto text-(--color-ink-secondary) hover:text-(--color-ink)">
+            Fechar
+          </button>
         </div>
       ) : null}
 
       <DrawerDetalhesLead
         lead={leadDetalhe}
         candidato={leadDetalhe ? candidatos.has(leadDetalhe.id) : false}
+        noCrm={leadDetalhe ? leadsNoCrm.has(leadDetalhe.id) : false}
+        enviandoCrm={leadDetalhe ? enviandoCrmId === leadDetalhe.id : false}
         onFechar={() => setLeadDetalhe(null)}
         onSelecionarCandidato={() => leadDetalhe && alternarCandidato(leadDetalhe.id)}
+        onAdicionarAoCrm={adicionarAoCrm}
+      />
+
+      <ModalDuplicataCrm
+        info={duplicataInfo}
+        onCancelar={() => setDuplicataInfo(null)}
+        onAbrirExistente={() => {
+          const existenteId = duplicataInfo.leadExistente.id
+          setDuplicataInfo(null)
+          navigate(`/dashboard/crm?lead=${existenteId}`)
+        }}
+        onAdicionarMesmoAssim={() => {
+          const lead = duplicataInfo.lead
+          setDuplicataInfo(null)
+          adicionarAoCrm(lead, { forcar: true })
+        }}
       />
     </div>
   )
