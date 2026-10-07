@@ -5,12 +5,12 @@ import { useAuth } from '../lib/AuthContext'
 import { CHAVE_MANTER_CONECTADO } from '../lib/supabaseClient'
 
 // Login real, sem mock e sem bypass — exatamente como pedido na correção
-// de autenticação (Fase 0) e reafirmado na Fase 0.5. AuthContext.entrar()
-// chama supabase.auth.signInWithPassword de verdade; sem VITE_SUPABASE_URL/
-// VITE_SUPABASE_ANON_KEY configurados (.env ainda não existe nesta fase),
-// supabaseClient.js já loga um aviso no console e qualquer tentativa de
-// login simplesmente falha com o erro real do Supabase (ou da ausência de
-// URL) — nunca um usuário falso "passando".
+// de autenticação (Fase 0), reafirmado na Fase 0.5 e na Fase 1.
+// AuthContext.entrar() chama supabase.auth.signInWithPassword de verdade; e
+// quando VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY não estão configurados, a
+// aplicação SABE disso explicitamente (isSupabaseConfigured, ver
+// supabaseClient.js) e mostra um aviso claro em vez de tentar uma chamada
+// de rede contra um endpoint fictício.
 //
 // Campo "Usuário ou e-mail" (Fase 0.5, item 13 do planejamento): o rótulo é
 // propositalmente genérico porque a forma real de permitir login digitando
@@ -22,7 +22,7 @@ import { CHAVE_MANTER_CONECTADO } from '../lib/supabaseClient'
 // Supabase até essa estratégia ser definida — comportamento esperado nesta
 // fase, não um bug).
 export default function Login() {
-  const { session, loading, entrar } = useAuth()
+  const { session, loading, entrar, isSupabaseConfigured } = useAuth()
   const [usuario, setUsuario] = useState('')
   const [senha, setSenha] = useState('')
   const [mostrarSenha, setMostrarSenha] = useState(false)
@@ -64,7 +64,7 @@ export default function Login() {
     const { error } = await entrar(usuario.trim(), senha)
     setEntrando(false)
     if (error) {
-      setErro('Usuário/e-mail ou senha incorretos, ou o Supabase deste projeto ainda não foi configurado (.env).')
+      setErro(isSupabaseConfigured ? 'Usuário/e-mail ou senha incorretos.' : 'Supabase não configurado neste ambiente.')
       return
     }
     navigate(location.state?.from?.pathname || '/dashboard', { replace: true })
@@ -82,6 +82,12 @@ export default function Login() {
           <h1 className="mt-4 font-display text-2xl font-semibold text-(--color-ink)">Bem-vindo de volta</h1>
           <p className="mt-1 text-sm text-(--color-ink-secondary)">Entre para continuar no Moraes.Dev Control.</p>
         </div>
+
+        {!isSupabaseConfigured && (
+          <p className="mb-4 rounded-lg bg-(--color-status-inicio-bg) px-3 py-2 text-center text-xs font-medium text-(--color-status-inicio)">
+            Supabase não configurado neste ambiente — defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.
+          </p>
+        )}
 
         <form
           onSubmit={aoSubmeter}

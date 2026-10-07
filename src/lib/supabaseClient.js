@@ -3,23 +3,18 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-// Bug pré-existente corrigido nesta fase: createClient() lança exceção
-// SÍNCRONA ("supabaseUrl is required") quando chamado sem URL — como isso
-// acontecia direto no topo deste módulo, sem .env a aplicação INTEIRA
-// quebrava com tela branca, nem a tela de login conseguia renderizar (o
-// que inviabilizava inclusive a revisão visual desta fase, já que ainda
-// não existe nenhum Supabase do Moraes.Dev Control). Isso não é um mock de
-// autenticação: os valores abaixo são placeholders obviamente falsos usados
-// só para o SDK não quebrar ao instanciar — supabase.auth.signInWithPassword
-// continua sendo chamado de verdade e falhando de verdade (erro real de
-// rede/DNS para um host que não existe), exatamente como já acontecia
-// quando supabaseUrl/supabaseAnonKey vinham vazios.
-const SUPABASE_URL_PLACEHOLDER = 'https://supabase-nao-configurado.invalid'
-const SUPABASE_ANON_KEY_PLACEHOLDER = 'chave-anon-placeholder-nao-e-credencial-real'
+// Fase 1, item 2 do planejamento: substitui a solução temporária da Fase
+// 0.5 (client apontando para uma URL fictícia só para não travar). Agora a
+// aplicação sabe de forma EXPLÍCITA se o Supabase está configurado ou não —
+// nada de fallback silencioso para endpoint falso. Todo código que usa
+// `supabase` deve checar `isSupabaseConfigured` antes (ver AuthContext.jsx,
+// Login.jsx): quando false, `supabase` é `null` e nenhuma chamada de rede é
+// feita.
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 
-if (!supabaseUrl || !supabaseAnonKey) {
+if (!isSupabaseConfigured) {
   console.warn(
-    'Supabase não configurado. Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no arquivo .env (veja .env.example).'
+    'Supabase não configurado. Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no arquivo .env (veja .env.example) ou nas variáveis de ambiente do deploy.'
   )
 }
 
@@ -50,8 +45,6 @@ const storageComEscolha = {
   },
 }
 
-export const supabase = createClient(
-  supabaseUrl || SUPABASE_URL_PLACEHOLDER,
-  supabaseAnonKey || SUPABASE_ANON_KEY_PLACEHOLDER,
-  { auth: { storage: storageComEscolha } }
-)
+export const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey, { auth: { storage: storageComEscolha } })
+  : null

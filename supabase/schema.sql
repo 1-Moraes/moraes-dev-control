@@ -481,12 +481,87 @@ create table public.notifications (
 );
 
 -- ----------------------------------------------------------------------------
--- RLS — tabelas de negócio: por ora, "qualquer autenticado vê/edita tudo"
--- (mesmo padrão simples do projeto original). Regras por papel (RBAC real)
--- entram quando user_roles estiver populado e as telas existirem de fato —
--- criar a policy fina agora, sem UI nenhuma pra testá-la, seria regra
--- morta. Isso é dívida técnica CONSCIENTE, documentada nos riscos.
+-- RLS — tabelas de negócio (revisado na Fase 1, item 5 do planejamento).
+--
+-- A versão da Fase 0 ("qualquer authenticated pode ver/criar/editar tudo",
+-- using (true)) era dívida técnica CONSCIENTE e documentada, mas o próprio
+-- planejamento da Fase 1 pediu revisão antes de ir pra produção — não dá
+-- pra levar isso pro primeiro deploy real. A versão abaixo:
+--
+--   1. Troca "authenticated" (qualquer JWT válido, inclusive uma conta nova
+--      que se cadastre sozinha, já que o projeto tem signup aberto por
+--      padrão) por "tem pelo menos um papel atribuído em user_roles" —
+--      ou seja, só quem já é efetivamente um membro provisionado do time.
+--   2. Escrita (insert/update/delete) fica restrita a quem tem o papel
+--      Administrador. Hoje só existe um usuário (Chefe/Administrador), então
+--      isso já é exatamente correto na prática — e fica pronto pra extensão:
+--      quando permissões por área entrarem em uso real na interface (ex.:
+--      Comercial só em leads/clientes), cada policy troca "is_admin()" por
+--      "is_admin() or has_permission('<slug>')" tabela a tabela, sem
+--      precisar redesenhar nada.
+--
+-- Criar a matriz fina de permissão por área AGORA, sem nenhuma tela usando
+-- isso de verdade, seria regra morta e impossível de testar — por isso o
+-- corte foi "admin escreve, qualquer membro provisionado lê", não "todo
+-- mundo faz tudo".
 -- ----------------------------------------------------------------------------
+
+-- SECURITY DEFINER pra poder consultar user_roles/roles sem depender da
+-- RLS dessas tabelas (que só libera select, sem write) e sem risco de
+-- recursão de policy.
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.user_roles ur
+    join public.roles r on r.id = ur.role_id
+    where ur.profile_id = auth.uid()
+      and lower(r.nome) = 'administrador'
+  );
+$$;
+
+-- Tem pelo menos um papel atribuído, qualquer um — usado pra distinguir
+-- "conta Supabase Auth existe" de "é membro provisionado do Moraes.Dev
+-- Control" (o projeto tem signup aberto por padrão; sem essa checagem,
+-- uma conta criada por fora já enxergaria os dados de negócio).
+create or replace function public.has_any_role()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.user_roles where profile_id = auth.uid()
+  );
+$$;
+
+-- Preparado para a matriz fina de permissões por área (decisão de design
+-- #3 no topo do arquivo) — ainda não usado por nenhuma policy abaixo
+-- (nenhuma tela consome permissions ainda), mas a função já existe pronta
+-- pra quando entrar em uso real, tabela a tabela.
+create or replace function public.has_permission(chave_permissao text)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.user_roles ur
+    join public.role_permissions rp on rp.role_id = ur.role_id
+    join public.permissions p on p.id = rp.permission_id
+    where ur.profile_id = auth.uid()
+      and p.chave = chave_permissao
+  ) or public.is_admin();
+$$;
+
 do $$
 declare
   tabela text;
@@ -501,19 +576,42 @@ begin
   loop
     execute format('alter table public.%I enable row level security', tabela);
     execute format(
-      'create policy "Autenticados podem ver %s" on public.%I for select to authenticated using (true)',
+      'create policy "Membros provisionados podem ver %s" on public.%I for select to authenticated using (public.has_any_role())',
       tabela, tabela
     );
     execute format(
-      'create policy "Autenticados podem criar %s" on public.%I for insert to authenticated with check (true)',
+      'create policy "Administrador pode criar %s" on public.%I for insert to authenticated with check (public.is_admin())',
       tabela, tabela
     );
     execute format(
-      'create policy "Autenticados podem atualizar %s" on public.%I for update to authenticated using (true)',
+      'create policy "Administrador pode atualizar %s" on public.%I for update to authenticated using (public.is_admin())',
+      tabela, tabela
+    );
+    execute format(
+      'create policy "Administrador pode excluir %s" on public.%I for delete to authenticated using (public.is_admin())',
       tabela, tabela
     );
   end loop;
 end $$;
+
+-- profiles/RBAC também precisam de has_any_role() em vez de "true" puro,
+-- pelo mesmo motivo (signup aberto por padrão) — substitui as policies de
+-- select criadas lá em cima.
+drop policy "Usuários autenticados podem ver perfis" on public.profiles;
+create policy "Membros provisionados podem ver perfis" on public.profiles for select to authenticated using (public.has_any_role());
+
+drop policy "Usuários autenticados podem ver RBAC" on public.teams;
+drop policy "Usuários autenticados podem ver RBAC" on public.team_members;
+drop policy "Usuários autenticados podem ver RBAC" on public.roles;
+drop policy "Usuários autenticados podem ver RBAC" on public.permissions;
+drop policy "Usuários autenticados podem ver RBAC" on public.role_permissions;
+drop policy "Usuários autenticados podem ver RBAC" on public.user_roles;
+create policy "Membros provisionados podem ver RBAC" on public.teams for select to authenticated using (public.has_any_role());
+create policy "Membros provisionados podem ver RBAC" on public.team_members for select to authenticated using (public.has_any_role());
+create policy "Membros provisionados podem ver RBAC" on public.roles for select to authenticated using (public.has_any_role());
+create policy "Membros provisionados podem ver RBAC" on public.permissions for select to authenticated using (public.has_any_role());
+create policy "Membros provisionados podem ver RBAC" on public.role_permissions for select to authenticated using (public.has_any_role());
+create policy "Membros provisionados podem ver RBAC" on public.user_roles for select to authenticated using (public.has_any_role());
 
 -- ============================================================================
 -- Fim do schema proposto. NÃO EXECUTAR sem: (1) projeto Supabase próprio do

@@ -1,12 +1,16 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
-import { supabase } from '../lib/supabaseClient'
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient'
 
 const AuthContext = createContext(undefined)
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
-  const [loading, setLoading] = useState(true)
+  // Sem Supabase configurado não existe nada pra carregar — loading começa
+  // (e já termina) em false, em vez de ficar girando pra sempre esperando
+  // uma chamada de rede que nunca vai acontecer (ver isSupabaseConfigured
+  // em supabaseClient.js, Fase 1 item 2).
+  const [loading, setLoading] = useState(isSupabaseConfigured)
   const idCarregandoRef = useRef(null) // evita duas buscas de perfil em paralelo pro mesmo usuário
 
   // Movida para ANTES do useEffect que a chama (o original a tinha depois —
@@ -40,6 +44,8 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
+    if (!isSupabaseConfigured) return // nada a restaurar/escutar sem Supabase real
+
     let mounted = true
 
     supabase.auth.getSession().then(({ data }) => {
@@ -79,12 +85,20 @@ export function AuthProvider({ children }) {
   }
 
   async function entrar(email, senha) {
+    if (!isSupabaseConfigured) {
+      return { error: new Error('Supabase não configurado neste ambiente (faltam VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).') }
+    }
     const { error } = await supabase.auth.signInWithPassword({ email, password: senha })
     return { error }
   }
 
   async function sair() {
+    if (!isSupabaseConfigured) return
     await supabase.auth.signOut()
+    // Garante que nenhum estado de sessão sobrevive localmente mesmo se o
+    // signOut() falhar silenciosamente por algum motivo de rede.
+    setSession(null)
+    setProfile(null)
   }
 
   async function atualizarCorTema(corTema) {
@@ -109,7 +123,9 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, entrar, sair, atualizarCorTema, atualizarPaginaInicial, atualizarLayoutMenu, trocarSenha }}>
+    <AuthContext.Provider
+      value={{ session, profile, loading, isSupabaseConfigured, entrar, sair, atualizarCorTema, atualizarPaginaInicial, atualizarLayoutMenu, trocarSenha }}
+    >
       {children}
     </AuthContext.Provider>
   )
