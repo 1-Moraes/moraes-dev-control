@@ -21,13 +21,29 @@
 // Arquitetura: este componente só recebe `leads` (já normalizados, com
 // latitude/longitude) e é inteiramente independente da fonte de descoberta
 // — não importa nada de src/lib/radar/providers/.
+//
+// CORREÇÃO (mapa não renderizava em produção — só o fundo vazio + a
+// atribuição apareciam): ver nota antes de ESTILO_MAPA, mais abaixo.
 
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 // Esta versão do maplibre-gl não tem export default — só nomeados.
 import { Map as MapaLibre, LngLatBounds } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import { AlertTriangle, RefreshCw } from 'lucide-react'
 
+// Estilo "Positron" do OpenFreeMap — confirmado contra a documentação atual
+// (openfreemap.org/quick_start) e contra o próprio style.json em produção
+// nesta correção: ainda é o endpoint correto, versão 8, com sprite/glyphs/
+// fontes de tiles todos sob o mesmo domínio tiles.openfreemap.org (sem
+// mixed content, sem domínio secundário). Gratuito, sem chave, sem limite
+// cobrado — mantido como MapProvider principal.
 const ESTILO_MAPA = 'https://tiles.openfreemap.org/styles/positron'
+
+// Tempo máximo de espera pelo evento "load" (ou "error") do MapLibre antes
+// de considerarmos a inicialização travada e mostrarmos o estado de erro —
+// cobre o caso de uma falha de rede/CORS que não dispara um evento "error"
+// capturável pela lib (ex.: alguns bloqueios no nível do navegador).
+const TIMEOUT_CARREGAMENTO_MS = 12000
 
 function leadsParaGeoJSON(leads) {
   return {
@@ -59,9 +75,27 @@ export default function MapaResultados({ leads, selecionadoId, onSelecionar }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const idsNumericos = useRef(new Map())
+  const timeoutRef = useRef(null)
+  const resizeObserverRef = useRef(null)
+  // Espelha `estado` para uso dentro de callbacks do MapLibre sem precisar
+  // recriar os listeners a cada render (evita closures com estado antigo).
+  const estadoRef = useRef('carregando')
+
+  // "carregando" | "ok" | "erro" — estado de inicialização do próprio mapa
+  // (estilo + tiles), independente de `leads` (resultados da busca).
+  const [estado, setEstado] = useState('carregando')
+  // Incrementar força a recriação completa do mapa (botão "Tentar novamente").
+  const [tentativa, setTentativa] = useState(0)
+
+  const marcarEstado = useCallback((novo) => {
+    estadoRef.current = novo
+    setEstado(novo)
+  }, [])
 
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return
+    if (!containerRef.current) return
+
+    marcarEstado('carregando')
 
     const map = new MapaLibre({
       container: containerRef.current,
@@ -72,7 +106,27 @@ export default function MapaResultados({ leads, selecionadoId, onSelecionar }) {
     })
     mapRef.current = map
 
+    // Diagnóstico (item 3 do pedido): erro real de estilo/tile/fonte/sprite
+    // — nunca registra secrets, só a mensagem/URL/status do próprio evento
+    // do MapLibre. Enquanto o mapa ainda não carregou com sucesso uma vez,
+    // qualquer "error" aqui é tratado como fatal para a inicialização.
+    map.on('error', (e) => {
+      const erro = e?.error
+      console.error('[Radar/Mapa] evento de erro do MapLibre', {
+        mensagem: erro?.message || String(erro) || 'sem mensagem',
+        status: erro?.status ?? null,
+        url: erro?.url ?? null,
+      })
+      if (estadoRef.current !== 'ok') {
+        marcarEstado('erro')
+      }
+    })
+
     map.on('load', () => {
+      clearTimeout(timeoutRef.current)
+      console.log('[Radar/Mapa] estilo e fontes carregados com sucesso')
+      marcarEstado('ok')
+
       map.addSource('leads', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -138,26 +192,60 @@ export default function MapaResultados({ leads, selecionadoId, onSelecionar }) {
       map.on('mouseleave', 'clusters', () => (map.getCanvas().style.cursor = ''))
 
       aplicarLeads(map, leads, idsNumericos)
+
+      // Correção do sintoma "fundo vazio + atribuição aparece": se o
+      // container ainda não tinha dimensões definitivas no instante em que
+      // o mapa foi construído (CSS do maplibre-gl carregado em chunk
+      // separado via code-splitting, troca do fallback do Suspense, aba
+      // lista/mapa no mobile, etc.), o canvas WebGL pode ficar com tamanho
+      // 0 ou desatualizado mesmo com o estilo e as fontes já carregados —
+      // a atribuição (controle HTML, não depende do canvas) aparece, mas
+      // nenhum tile é desenhado. Forçar um resize explícito aqui garante
+      // que o canvas sempre reflita o tamanho real do container assim que
+      // o estilo termina de carregar.
+      map.resize()
     })
 
+    // Mesma correção acima, de forma contínua: observa o próprio container
+    // e redimensiona o mapa sempre que o tamanho dele mudar (troca de aba
+    // lista/mapa no mobile, sidebar, layout ainda assentando no primeiro
+    // paint, etc.) em vez de confiar só no tamanho no instante da criação.
+    const resizeObserver = new ResizeObserver(() => {
+      mapRef.current?.resize()
+    })
+    resizeObserver.observe(containerRef.current)
+    resizeObserverRef.current = resizeObserver
+
+    // Watchdog: se nem "load" nem "error" chegarem a tempo (ex.: bloqueio
+    // de rede/CORS que o navegador não reporta como evento capturável pela
+    // lib), não deixar a área do mapa presa num "carregando" infinito.
+    timeoutRef.current = setTimeout(() => {
+      if (estadoRef.current === 'carregando') {
+        console.error('[Radar/Mapa] timeout: nem "load" nem "error" chegaram em', TIMEOUT_CARREGAMENTO_MS, 'ms')
+        marcarEstado('erro')
+      }
+    }, TIMEOUT_CARREGAMENTO_MS)
+
     return () => {
+      clearTimeout(timeoutRef.current)
+      resizeObserverRef.current?.disconnect()
       map.remove()
       mapRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- só cria o mapa uma vez; leads/seleção são aplicados nos effects abaixo
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recria o mapa do zero só quando `tentativa` muda (botão "Tentar novamente"); leads/seleção são aplicados nos effects abaixo
+  }, [tentativa, marcarEstado])
 
   // Atualiza os pontos quando os resultados da busca mudam.
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !map.isStyleLoaded() || !map.getSource('leads')) return
+    if (!map || estado !== 'ok' || !map.isStyleLoaded() || !map.getSource('leads')) return
     aplicarLeads(map, leads, idsNumericos)
-  }, [leads])
+  }, [leads, estado])
 
   // Destaca o lead selecionado (clique na lista) e centraliza o mapa nele.
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !map.getSource('leads')) return
+    if (!map || estado !== 'ok' || !map.getSource('leads')) return
 
     idsNumericos.current.forEach((numId) => {
       try {
@@ -176,9 +264,35 @@ export default function MapaResultados({ leads, selecionadoId, onSelecionar }) {
     if (lead?.latitude && lead?.longitude) {
       map.easeTo({ center: [lead.longitude, lead.latitude], zoom: Math.max(map.getZoom(), 15) })
     }
-  }, [selecionadoId, leads])
+  }, [selecionadoId, leads, estado])
 
-  return <div ref={containerRef} className="h-full w-full rounded-2xl" />
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full rounded-2xl" />
+
+      {estado !== 'ok' ? (
+        <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-(--color-surface)">
+          {estado === 'erro' ? (
+            <div className="flex max-w-xs flex-col items-center gap-2 px-4 text-center">
+              <AlertTriangle size={24} className="text-amber-500" />
+              <p className="text-sm font-medium text-(--color-ink)">Não foi possível carregar o mapa.</p>
+              <p className="text-xs text-(--color-ink-secondary)">A lista de empresas continua disponível ao lado.</p>
+              <button
+                type="button"
+                onClick={() => setTentativa((t) => t + 1)}
+                className="mt-1 flex items-center gap-1.5 rounded-xl bg-(--color-primary) px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-(--color-primary-hover)"
+              >
+                <RefreshCw size={13} />
+                Tentar novamente
+              </button>
+            </div>
+          ) : (
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-line) border-t-(--color-primary)" />
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function aplicarLeads(map, leads, idsNumericosRef) {
