@@ -381,7 +381,19 @@ create table public.projects (
   prazo_previsto date,
   valor_contratado numeric(12, 2),
   descricao text,
-  observacoes text
+  observacoes text,
+  -- Fase 2E — ver migration 0004_fase_2e_gestao_projetos.sql
+  briefing jsonb not null default '{}'::jsonb,
+  briefing_atualizado_em timestamptz,
+  infra_dominio text,
+  infra_hospedagem text,
+  infra_repositorio text,
+  infra_homologacao_url text,
+  infra_banco text,
+  infra_observacoes text,
+  data_finalizacao date,
+  motivo_pausa text,
+  motivo_cancelamento text
 );
 
 create trigger projects_set_updated_at before update on public.projects
@@ -395,14 +407,24 @@ create table public.project_tasks (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects (id) on delete cascade,
   titulo text not null,
-  status text not null default 'pendente',
+  -- Fase 2E: status migrado para a_fazer/em_andamento/concluida/bloqueada
+  -- (era 'pendente' sem CHECK na Fase 0) — ver migration 0004.
+  status text not null default 'a_fazer' check (status in ('a_fazer', 'em_andamento', 'concluida', 'bloqueada')),
   responsavel_id uuid references public.profiles (id),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  -- Fase 2E — subtarefas (checklist), descrição, prioridade, prazo
+  parent_task_id uuid references public.project_tasks (id) on delete cascade,
+  descricao text,
+  prioridade text not null default 'media' check (prioridade in ('baixa', 'media', 'alta')),
+  prazo date,
+  concluida_em timestamptz
 );
 
 create trigger project_tasks_set_updated_at before update on public.project_tasks
   for each row execute function public.set_updated_at();
+
+create index idx_project_tasks_parent on public.project_tasks (parent_task_id);
 
 create table public.project_files (
   id uuid primary key default gen_random_uuid(),
@@ -410,7 +432,10 @@ create table public.project_files (
   url text not null,
   nome_arquivo text,
   enviado_por uuid references public.profiles (id),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Fase 2E
+  tipo text not null default 'outro' check (tipo in ('imagem', 'pdf', 'documento', 'logo', 'briefing', 'referencia', 'outro')),
+  descricao text
 );
 
 -- Feed de atividade do projeto (UI de timeline) — propósito diferente de
@@ -424,6 +449,56 @@ create table public.project_activities (
 );
 
 create index idx_project_activities_project_id on public.project_activities (project_id);
+
+-- Fase 2E — links do projeto (produção, homologação, Figma, GitHub, Vercel,
+-- domínio, hospedagem, outro). Ver migration 0004_fase_2e_gestao_projetos.sql.
+create table public.project_links (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects (id) on delete cascade,
+  nome text not null,
+  tipo text not null default 'outro' check (tipo in ('producao', 'homologacao', 'figma', 'github', 'vercel', 'dominio', 'hospedagem', 'outro')),
+  url text not null,
+  observacao text,
+  criado_por uuid references public.profiles (id),
+  created_at timestamptz not null default now()
+);
+
+create index idx_project_links_project on public.project_links (project_id);
+
+-- Fase 2E — alterações solicitadas (úteis principalmente em
+-- Homologação/Ajustes).
+create table public.project_change_requests (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects (id) on delete cascade,
+  descricao text not null,
+  status text not null default 'aberta' check (status in ('aberta', 'em_andamento', 'concluida', 'cancelada')),
+  prioridade text not null default 'media' check (prioridade in ('baixa', 'media', 'alta')),
+  solicitada_em timestamptz not null default now(),
+  concluida_em timestamptz,
+  observacoes text,
+  criado_por uuid references public.profiles (id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index idx_project_change_requests_project on public.project_change_requests (project_id);
+
+-- Fase 2E — registro manual de deploys (sem integração automática com
+-- Vercel nesta fase).
+create table public.project_deploys (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects (id) on delete cascade,
+  ambiente text not null default 'homologacao' check (ambiente in ('homologacao', 'producao', 'outro')),
+  versao_descricao text,
+  url text,
+  data_deploy date not null default current_date,
+  responsavel_id uuid references public.profiles (id),
+  status text not null default 'sucesso' check (status in ('sucesso', 'falha', 'pendente')),
+  observacao text,
+  created_at timestamptz not null default now()
+);
+
+create index idx_project_deploys_project on public.project_deploys (project_id);
 
 -- ----------------------------------------------------------------------------
 -- COMERCIAL (propostas, vendas, pagamentos)
@@ -804,6 +879,51 @@ alter policy "Administrador pode criar audit_logs" on public.audit_logs
   rename to "Membros provisionados podem criar audit_logs";
 alter policy "Membros provisionados podem criar audit_logs" on public.audit_logs
   with check (has_any_role());
+
+-- RLS — Fase 2E (Gestão de Projetos): project_links/project_change_requests/
+-- project_deploys são tabelas novas, nascem já com o padrão relaxado
+-- (SELECT/INSERT/UPDATE para has_any_role(), DELETE para is_admin()).
+-- project_tasks/project_files existiam desde a Fase 0 com INSERT/UPDATE
+-- restritos a is_admin() (loop genérico original) — relaxados aqui porque
+-- toda a equipe provisionada precisa gerenciar tarefas/arquivos no dia a dia.
+alter table public.project_links enable row level security;
+alter table public.project_change_requests enable row level security;
+alter table public.project_deploys enable row level security;
+
+create policy "Membros provisionados podem ver project_links" on public.project_links for select using (has_any_role());
+create policy "Membros provisionados podem criar project_links" on public.project_links for insert with check (has_any_role());
+create policy "Membros provisionados podem atualizar project_links" on public.project_links for update using (has_any_role());
+create policy "Administrador pode excluir project_links" on public.project_links for delete using (is_admin());
+
+create policy "Membros provisionados podem ver project_change_requests" on public.project_change_requests for select using (has_any_role());
+create policy "Membros provisionados podem criar project_change_requests" on public.project_change_requests for insert with check (has_any_role());
+create policy "Membros provisionados podem atualizar project_change_requests" on public.project_change_requests for update using (has_any_role());
+create policy "Administrador pode excluir project_change_requests" on public.project_change_requests for delete using (is_admin());
+
+create policy "Membros provisionados podem ver project_deploys" on public.project_deploys for select using (has_any_role());
+create policy "Membros provisionados podem criar project_deploys" on public.project_deploys for insert with check (has_any_role());
+create policy "Membros provisionados podem atualizar project_deploys" on public.project_deploys for update using (has_any_role());
+create policy "Administrador pode excluir project_deploys" on public.project_deploys for delete using (is_admin());
+
+alter policy "Administrador pode criar project_tasks" on public.project_tasks
+  rename to "Membros provisionados podem criar project_tasks";
+alter policy "Membros provisionados podem criar project_tasks" on public.project_tasks
+  with check (has_any_role());
+
+alter policy "Administrador pode atualizar project_tasks" on public.project_tasks
+  rename to "Membros provisionados podem atualizar project_tasks";
+alter policy "Membros provisionados podem atualizar project_tasks" on public.project_tasks
+  using (has_any_role());
+
+alter policy "Administrador pode criar project_files" on public.project_files
+  rename to "Membros provisionados podem criar project_files";
+alter policy "Membros provisionados podem criar project_files" on public.project_files
+  with check (has_any_role());
+
+alter policy "Administrador pode atualizar project_files" on public.project_files
+  rename to "Membros provisionados podem atualizar project_files";
+alter policy "Membros provisionados podem atualizar project_files" on public.project_files
+  using (has_any_role());
 
 -- ============================================================================
 -- Fim do schema proposto. NÃO EXECUTAR sem: (1) projeto Supabase próprio do
