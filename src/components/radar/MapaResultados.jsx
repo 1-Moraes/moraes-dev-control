@@ -22,14 +22,40 @@
 // latitude/longitude) e é inteiramente independente da fonte de descoberta
 // — não importa nada de src/lib/radar/providers/.
 //
-// CORREÇÃO (mapa não renderizava em produção — só o fundo vazio + a
-// atribuição apareciam): ver nota antes de ESTILO_MAPA, mais abaixo.
+// CAUSA REAL do mapa vazio em produção (correção anterior, baseada em
+// ResizeObserver, não era a causa principal — mantida abaixo por ainda ser
+// útil, especialmente no mobile, mas o relatório anterior estava errado
+// nesse ponto): o MapLibre GL JS carrega seu próprio Web Worker calculando
+// a URL dele em runtime como um ARQUIVO IRMÃO do próprio chunk JS que o
+// contém — `new URL('./maplibre-gl-worker.mjs', import.meta.url)` (ver
+// node_modules/maplibre-gl/dist/maplibre-gl.mjs, função que resolve
+// getWorkerUrl()). Isso funciona se maplibre-gl for servido direto da
+// pasta node_modules/maplibre-gl/dist/ (onde esse arquivo realmente mora
+// ao lado do principal), mas quebra sob qualquer bundler que empacota o
+// código da lib dentro de um chunk próprio com nome/hash diferente (aqui,
+// MapaResultados-<hash>.js, via code-splitting) — o worker nunca existiu
+// em dist/assets/maplibre-gl-worker.mjs, e o rewrite de SPA do Vercel
+// (necessário para as rotas do Control) serve index.html para qualquer
+// caminho sem correspondência, inclusive esse — daí o
+// "non-JavaScript MIME type of text/html" e "Worker failed to load".
+//
+// CORREÇÃO (forma oficialmente suportada pela própria lib, sem hash
+// hardcoded): maplibre-gl exporta `setWorkerUrl()` para sobrescrever esse
+// cálculo automático. Importamos o arquivo real do worker com o sufixo
+// `?url` do Vite — isso faz o Vite copiá-lo para dist/assets/ como um
+// asset estático de verdade, com o hash de conteúdo calculado por ELE
+// (nunca por nós), e nos devolve a URL final já correta como string.
+// Chamamos setWorkerUrl() uma vez, no carregamento do módulo, antes de
+// qualquer instância de mapa ser criada.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 // Esta versão do maplibre-gl não tem export default — só nomeados.
-import { Map as MapaLibre, LngLatBounds } from 'maplibre-gl'
+import { Map as MapaLibre, LngLatBounds, setWorkerUrl } from 'maplibre-gl'
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
+
+setWorkerUrl(maplibreWorkerUrl)
 
 // Estilo "Positron" do OpenFreeMap — confirmado contra a documentação atual
 // (openfreemap.org/quick_start) e contra o próprio style.json em produção
@@ -193,23 +219,20 @@ export default function MapaResultados({ leads, selecionadoId, onSelecionar }) {
 
       aplicarLeads(map, leads, idsNumericos)
 
-      // Correção do sintoma "fundo vazio + atribuição aparece": se o
-      // container ainda não tinha dimensões definitivas no instante em que
-      // o mapa foi construído (CSS do maplibre-gl carregado em chunk
-      // separado via code-splitting, troca do fallback do Suspense, aba
-      // lista/mapa no mobile, etc.), o canvas WebGL pode ficar com tamanho
-      // 0 ou desatualizado mesmo com o estilo e as fontes já carregados —
-      // a atribuição (controle HTML, não depende do canvas) aparece, mas
-      // nenhum tile é desenhado. Forçar um resize explícito aqui garante
-      // que o canvas sempre reflita o tamanho real do container assim que
-      // o estilo termina de carregar.
+      // NOTA: a causa raiz do mapa vazio em produção era o Web Worker (ver
+      // comentário no topo do arquivo), não o tamanho do container — esse
+      // resize explícito e o ResizeObserver abaixo continuam valendo como
+      // reforço (principalmente no mobile, onde o container do mapa começa
+      // com display:none até a troca para a aba "Mapa", o que pode deixar
+      // o canvas com um tamanho desatualizado mesmo depois do worker
+      // carregar corretamente).
       map.resize()
     })
 
-    // Mesma correção acima, de forma contínua: observa o próprio container
-    // e redimensiona o mapa sempre que o tamanho dele mudar (troca de aba
-    // lista/mapa no mobile, sidebar, layout ainda assentando no primeiro
-    // paint, etc.) em vez de confiar só no tamanho no instante da criação.
+    // Observa o próprio container e redimensiona o mapa sempre que o
+    // tamanho dele mudar (troca de aba lista/mapa no mobile, sidebar,
+    // layout ainda assentando no primeiro paint, etc.) em vez de confiar
+    // só no tamanho no instante da criação.
     const resizeObserver = new ResizeObserver(() => {
       mapRef.current?.resize()
     })
