@@ -25,7 +25,16 @@ export default defineConfig([
     // frontend. Nunca inclui src/pages, src/components nem src/lib fora
     // destas pastas, pra não aceitar acidentalmente `process`/`global` em
     // código que de fato roda no navegador.
-    files: ['api/**/*.js', 'src/lib/radar/DiscoveryService.js', 'src/lib/radar/providers/**/*.js', '**/__tests__/**/*.js'],
+    files: [
+      'api/**/*.js',
+      'src/lib/radar/DiscoveryService.js',
+      'src/lib/radar/providers/**/*.js',
+      'src/lib/ai/AIOrchestrator.js',
+      'src/lib/ai/autenticacaoServidor.js',
+      'src/lib/ai/limites.js',
+      'src/lib/ai/providers/**/*.js',
+      '**/__tests__/**/*.js',
+    ],
     languageOptions: {
       globals: { ...globals.node, ...globals.vitest },
     },

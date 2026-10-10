@@ -9,6 +9,7 @@
 // em DrawerDetalhesLead.jsx para "Adicionar ao CRM".
 import { useState } from 'react'
 import { X, Gauge, Globe, AtSign, Loader2, CheckCircle2, XCircle, RotateCcw, ShieldCheck } from 'lucide-react'
+import PainelAnaliseIA from '../ia/PainelAnaliseIA'
 
 const COR_SCORE = {
   verde: 'bg-(--color-green)/15 text-(--color-green)',
@@ -31,7 +32,7 @@ const LABEL_CONFIRMACAO = {
   confirmado_nao_tem: 'Confirmado manualmente: não possui site',
 }
 
-export default function DrawerAnaliseLead({ lead, analise, noCrm, onFechar, onSalvarPresencaManual, salvando }) {
+export default function DrawerAnaliseLead({ lead, analise, noCrm, crmLeadId, onFechar, onSalvarPresencaManual, salvando }) {
   const [editando, setEditando] = useState(false)
   const [form, setForm] = useState(() => ({
     siteUrlManual: lead?.siteUrlManual || '',
@@ -138,6 +139,11 @@ export default function DrawerAnaliseLead({ lead, analise, noCrm, onFechar, onSa
             <dd className="text-(--color-ink)">{[lead.address, lead.city, lead.state].filter(Boolean).join(', ') || '—'}</dd>
           </div>
         </dl>
+
+        {/* Inteligência comercial (IA) — Fase 3B. leadId só existe quando o
+            candidato já está no CRM (crmLeadId); no Radar puro a análise é
+            só exibida nesta sessão, sem persistir. */}
+        <PainelAnaliseIA empresaCandidata={lead} analise={analise} leadId={noCrm ? crmLeadId : null} />
 
         {/* Correção manual */}
         <div className="mt-auto rounded-2xl border border-dashed border-(--color-line) p-3">

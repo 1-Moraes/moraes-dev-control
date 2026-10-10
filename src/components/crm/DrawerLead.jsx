@@ -29,7 +29,9 @@ import {
   atualizarCampos,
   listarMembrosEquipe,
   buscarUltimaAnalise,
+  analiseEstaDesatualizada,
 } from '../../lib/crm/LeadsService'
+import PainelAnaliseIA from '../ia/PainelAnaliseIA'
 import { converterLeadEmCliente, vincularLeadAClienteExistente } from '../../lib/clients/ClientsService'
 // Classificação do Opportunity Score (Fase 3A) — só a config de rótulos/
 // cores, lida aqui só pra exibir o score de forma discreta no CRM (NUNCA um
@@ -133,6 +135,16 @@ function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado })
       cancelado = true
     }
   }, [lead.id])
+
+  // Chamado pelo painel de IA depois de "[Salvar análise]" bem-sucedido —
+  // recarrega do banco em vez de só mesclar o estado local, porque
+  // salvarAnaliseIA insere uma linha nova (nunca sobrescreve) e queremos
+  // sempre exibir a mais recente de verdade.
+  function recarregarUltimaAnalise() {
+    buscarUltimaAnalise(lead.id)
+      .then(setUltimaAnalise)
+      .catch(() => {})
+  }
 
   async function salvarComercial() {
     setSalvandoComercial(true)
@@ -356,6 +368,33 @@ function DrawerLeadConteudo({ lead, onFechar, onMoverStatus, onLeadAtualizado })
           ) : null}
           <Campo label="Origem" valor={lead.origem?.nome} />
         </dl>
+
+        {/* Inteligência comercial (IA) — Fase 3B. Só aparece quando já
+            existe um Opportunity Score salvo (ultimaAnalise) — a IA
+            interpreta um score já calculado, nunca calcula um do zero
+            aqui no CRM. */}
+        {ultimaAnalise ? (
+          <div className="mt-4">
+            <PainelAnaliseIA
+              empresaCandidata={lead}
+              analise={{
+                score: ultimaAnalise.score_deterministico,
+                scoreVersion: ultimaAnalise.sinais?.scoreVersion,
+                classificacao: classificarScore(ultimaAnalise.score_deterministico).label,
+                criterios: ultimaAnalise.sinais?.criterios || [],
+                presenca: ultimaAnalise.sinais?.presenca || {},
+              }}
+              leadId={lead.id}
+              analiseIASalva={
+                ultimaAnalise.interpretacao_estruturada
+                  ? { dados: ultimaAnalise.interpretacao_estruturada, provider: ultimaAnalise.ia_provider, model: ultimaAnalise.ia_model, promptVersao: ultimaAnalise.ia_prompt_versao }
+                  : null
+              }
+              desatualizada={analiseEstaDesatualizada(ultimaAnalise, lead)}
+              onAnaliseSalva={recarregarUltimaAnalise}
+            />
+          </div>
+        ) : null}
 
         {/* Seção Comercial */}
         <h3 className="mt-6 text-xs font-bold uppercase tracking-wide text-(--color-ink-secondary)">Comercial</h3>

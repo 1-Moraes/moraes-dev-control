@@ -732,6 +732,7 @@ export default function Prospeccao() {
         lead={leadAnaliseAtual}
         analise={leadAnaliseAtual?.analise}
         noCrm={leadAnaliseAtual ? crmMatches.has(leadAnaliseAtual.id) : false}
+        crmLeadId={leadAnaliseAtual ? crmMatches.get(leadAnaliseAtual.id) : null}
         salvando={salvandoPresenca}
         onFechar={() => setLeadAnalise(null)}
         onSalvarPresencaManual={(patch) => leadAnaliseAtual && salvarPresencaManual(leadAnaliseAtual, patch)}

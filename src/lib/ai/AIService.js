@@ -1,47 +1,66 @@
-// Interface abstrata de IA — item 16 do planejamento.
+// AIService — interface de IA do lado do navegador (Fase 3B — substitui o
+// placeholder da fase anterior, que só registrava a forma do contrato sem
+// nenhum provider integrado). Roda no bundle Vite: por isso NUNCA importa
+// AIOrchestrator.js nem os providers (src/lib/ai/providers/) diretamente —
+// toda chamada real acontece em api/ia-radar.js, uma Vercel Function.
+// Nenhuma API key de IA existe ou pode existir aqui.
 //
-// NÃO INTEGRA NENHUM PROVIDER NESTA FASE. Este arquivo existe só para
-// registrar a forma da interface, sem chamar nenhuma API externa.
-//
-// Regras que valem desde já, mesmo sem nada implementado:
-//   - toda chamada real a um provider deve acontecer numa Vercel Function
-//     (server-side), nunca aqui — este arquivo roda no navegador.
-//   - nenhuma API key (Anthropic, OpenAI, etc.) pode existir no frontend.
-//   - a interface recebe "feature" (de onde a chamada partiu, ex.:
-//     "score-lead", "rascunho-whatsapp") para alimentar ai_logs sem
-//     guardar prompt/resposta completos por padrão (ver item 17).
-//
-// Quando a Fase 6 for autorizada, cada provider real (AnthropicProvider,
-// OpenAIProvider) vai implementar este mesmo contrato em
-// src/lib/ai/providers/, e a função server-side (api/ai-proxy.js, ainda
-// não criada) escolhe qual provider usar.
+// Os componentes de UI (DrawerAnaliseLead.jsx, PainelAnaliseIA.jsx,
+// DrawerLead.jsx) chamam só as funções daqui — nunca fazem fetch direto em
+// '/api/ia-radar'. `accessToken` é o `session.access_token` do Supabase
+// Auth (useAuth(), ver AuthContext.jsx) — a rota exige autenticação (item
+// 28 do planejamento).
+
+async function chamarEndpoint(accessToken, payload) {
+  const resp = await fetch('/api/ia-radar', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: JSON.stringify(payload),
+  })
+
+  let dados
+  try {
+    dados = await resp.json()
+  } catch {
+    return { status: 'erro', mensagemErro: 'Resposta inesperada do servidor.' }
+  }
+  return dados
+}
 
 /**
- * @typedef {Object} AIRequest
- * @property {string} feature - identifica de onde partiu a chamada (para ai_logs)
- * @property {string} prompt
- * @property {Object} [contexto]
+ * @param {Object} params
+ * @param {string} params.accessToken - sessão Supabase do usuário logado
+ * @param {Object} params.empresaCandidata - shape mínimo (ver OpportunityScore.js): name/category/city/state/phone/website/rating/reviewCount + instagramUrlManual/facebookUrlManual/siteUrlManual/confirmacaoManual
+ * @param {Object} params.analise - resultado de calcularOpportunityScore() já calculado (nunca recalculado aqui)
+ * @param {string|null} [params.leadId] - id em `leads`, quando a empresa já está no CRM; null/undefined para candidato ainda só no Radar
+ * @returns {Promise<Object>} ver api/ia-radar.js para o formato completo da resposta
  */
+export async function analisarOportunidade({ accessToken, empresaCandidata, analise, leadId }) {
+  return chamarEndpoint(accessToken, {
+    tarefa: 'analisar_oportunidade',
+    leadId: leadId || null,
+    empresaCandidata,
+    analise,
+  })
+}
 
 /**
- * @typedef {Object} AIResponse
- * @property {string} texto
- * @property {string} provider
- * @property {string} model
- * @property {number} tokensEntrada
- * @property {number} tokensSaida
+ * @param {Object} params
+ * @param {string} params.accessToken
+ * @param {Object} params.empresaCandidata
+ * @param {Object} params.analise
+ * @param {string|null} [params.leadId]
+ * @param {string} [params.instrucoesAdicionais] - texto livre opcional do usuário (item 17: "informações opcionais fornecidas pelo usuário")
  */
-
-/**
- * Contrato que todo provider deve implementar. Não é chamado diretamente
- * pelo frontend — fica atrás de uma Vercel Function.
- * @param {AIRequest} requisicao
- * @returns {Promise<AIResponse>}
- */
-// eslint-disable-next-line no-unused-vars -- parâmetro faz parte do contrato da interface, ainda sem implementação real
-export async function gerar(_requisicao) {
-  throw new Error(
-    'AIService.gerar() é só a interface — nenhum provider foi integrado nesta fase. ' +
-      'Ver src/lib/ai/providers/ (vazio) e o item 16 do planejamento do Moraes.Dev Control.'
-  )
+export async function gerarAbordagem({ accessToken, empresaCandidata, analise, leadId, instrucoesAdicionais }) {
+  return chamarEndpoint(accessToken, {
+    tarefa: 'gerar_abordagem',
+    leadId: leadId || null,
+    empresaCandidata,
+    analise,
+    instrucoesAdicionais: instrucoesAdicionais || null,
+  })
 }

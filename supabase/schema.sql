@@ -295,8 +295,19 @@ create table public.lead_analysis (
   sinais jsonb not null default '{}'::jsonb,
   score_deterministico smallint not null check (score_deterministico between 0 and 100),
   score_final smallint check (score_final between 0 and 100), -- pode ser igual ao determinístico se a IA não alterar nada
-  interpretacao_ia text, -- texto da IA interpretando o score — nunca substitui score_deterministico
-  created_at timestamptz not null default now()
+  interpretacao_ia text, -- Fase 3B: resumo_comercial curto da saída estruturada da IA — nunca substitui score_deterministico
+  created_at timestamptz not null default now(),
+
+  -- Fase 3B (Inteligência Artificial Comercial) — saída estruturada
+  -- completa da IA (item 13 do planejamento) e rastreabilidade de quem/
+  -- qual provider/modelo/versão de prompt gerou esta rodada. Todas
+  -- nullable: uma linha continua podendo ser só o score determinístico,
+  -- sem nenhuma análise de IA (ver migration 0007).
+  interpretacao_estruturada jsonb,
+  ia_provider text, -- 'anthropic' | 'openai' | NULL
+  ia_model text,
+  ia_prompt_versao text,
+  usuario_id uuid references public.profiles (id)
 );
 
 create index lead_analysis_lead_id_idx on public.lead_analysis (lead_id, created_at desc);
@@ -991,6 +1002,41 @@ alter policy "Membros provisionados podem criar lead_analysis" on public.lead_an
 alter policy "Administrador pode atualizar lead_analysis" on public.lead_analysis
   rename to "Membros provisionados podem atualizar lead_analysis";
 alter policy "Membros provisionados podem atualizar lead_analysis" on public.lead_analysis
+  using (has_any_role());
+
+-- ----------------------------------------------------------------------------
+-- RLS — Fase 3B (Inteligência Artificial Comercial): ai_logs tinha INSERT
+-- restrito a is_admin() (herdado do loop genérico da Fase 0) — mesma
+-- situação que lead_analysis tinha até a 0006. Relaxado aqui pro mesmo
+-- padrão (has_any_role()): qualquer membro provisionado roda análises de
+-- IA no dia a dia, o log técnico tem que acompanhar. SELECT já era
+-- has_any_role() desde a criação (loop genérico). UPDATE/DELETE continuam
+-- is_admin() (log técnico não é editado nem excluído pela UI) — ver
+-- migration 0007_fase_3b_ia_comercial.sql.
+-- ----------------------------------------------------------------------------
+alter policy "Administrador pode criar ai_logs" on public.ai_logs
+  rename to "Membros provisionados podem criar ai_logs";
+alter policy "Membros provisionados podem criar ai_logs" on public.ai_logs
+  with check (has_any_role());
+
+-- ----------------------------------------------------------------------------
+-- RLS — Fase 3B, migration 0008 (correção de lacuna da 0007): lead_messages
+-- tinha INSERT/UPDATE restritos a is_admin() (herdado do loop genérico da
+-- Fase 0) — mesma situação que lead_analysis/ai_logs tinham antes de serem
+-- corrigidos. Relaxado pro mesmo padrão (has_any_role()): qualquer membro
+-- provisionado salva/edita rascunhos de abordagem gerados por IA no dia a
+-- dia (salvarAbordagemGerada()/marcarMensagemComoAberta() em
+-- src/lib/crm/LeadsService.js). SELECT já era has_any_role() desde a
+-- criação. DELETE continua is_admin().
+-- ----------------------------------------------------------------------------
+alter policy "Administrador pode criar lead_messages" on public.lead_messages
+  rename to "Membros provisionados podem criar lead_messages";
+alter policy "Membros provisionados podem criar lead_messages" on public.lead_messages
+  with check (has_any_role());
+
+alter policy "Administrador pode atualizar lead_messages" on public.lead_messages
+  rename to "Membros provisionados podem atualizar lead_messages";
+alter policy "Membros provisionados podem atualizar lead_messages" on public.lead_messages
   using (has_any_role());
 
 -- ============================================================================

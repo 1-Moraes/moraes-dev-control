@@ -277,14 +277,33 @@ function payloadPresencaDigital(leadCandidate, usuarioId) {
   }
 }
 
-async function persistirAnaliseInterno(leadId, analise) {
+/**
+ * @param {string} leadId
+ * @param {Object} analise - shape de calcularOpportunityScore() (score/scoreVersion/criterios/presenca)
+ * @param {Object} [analiseIA] - Fase 3B — quando presente, grava a interpretação de IA NA MESMA linha
+ *   (nunca em uma tabela separada, ver migration 0007): { dados (schemaAnaliseComercial.validarAnaliseComercial().dados), provider, model, promptVersao }
+ * @param {string|null} [usuarioId] - autor desta rodada (item 23 do planejamento); resolvido pelo chamador, nunca inferido daqui
+ */
+async function persistirAnaliseInterno(leadId, analise, analiseIA = null, usuarioId = null) {
   if (!analise) return
-  const { error } = await supabase.from('lead_analysis').insert({
+  const payload = {
     lead_id: leadId,
     sinais: { criterios: analise.criterios, presenca: analise.presenca, scoreVersion: analise.scoreVersion, origem: 'radar' },
     score_deterministico: analise.score,
+    // Fase 3B, critério de aceite explícito: a IA NUNCA altera o
+    // Opportunity Score — score_final permanece sempre igual ao
+    // determinístico, com ou sem interpretação de IA nesta linha.
     score_final: analise.score,
-  })
+    usuario_id: usuarioId,
+  }
+  if (analiseIA?.dados) {
+    payload.interpretacao_ia = analiseIA.dados.resumo_comercial || null
+    payload.interpretacao_estruturada = analiseIA.dados
+    payload.ia_provider = analiseIA.provider || null
+    payload.ia_model = analiseIA.model || null
+    payload.ia_prompt_versao = analiseIA.promptVersao || null
+  }
+  const { error } = await supabase.from('lead_analysis').insert(payload)
   // Falha ao persistir a análise nunca deve impedir a criação do lead em si
   // — é um complemento, não um pré-requisito (mesma regra de resiliência já
   // aplicada na checagem "já no CRM" do Dashboard/Prospecção).
@@ -339,7 +358,11 @@ export async function criarLeadDoRadar(leadCandidate, { forcar = false } = {}) {
   if (error) throw error
 
   await registrarAtividadeInterno(data.id, 'lead_criado', 'Lead criado a partir do Radar de Prospecção.', usuarioId)
-  await persistirAnaliseInterno(data.id, leadCandidate.analise)
+  // leadCandidate.analise aqui é só o Opportunity Score determinístico do
+  // Radar — a interpretação de IA (Fase 3B) é sempre uma ação explícita e
+  // posterior do usuário ([Analisar com IA]), nunca automática na criação
+  // do lead, por isso analiseIA é null neste ponto.
+  await persistirAnaliseInterno(data.id, leadCandidate.analise, null, usuarioId)
 
   return { duplicata: false, lead: data }
 }
@@ -389,10 +412,37 @@ export async function registrarPresencaManual(leadId, patch) {
  * racional original da tabela desde a Fase 0).
  * @param {string} leadId
  * @param {AnaliseRadar} analise
+ * @param {Object} [analiseIA] - Fase 3B, opcional: quando o recálculo do score
+ *   e uma interpretação de IA já validada acontecem juntos (caso raro — o
+ *   fluxo normal é analisar IA sobre um score já existente, ver
+ *   salvarAnaliseIA abaixo).
  */
-export async function registrarNovaAnalise(leadId, analise) {
+export async function registrarNovaAnalise(leadId, analise, analiseIA = null) {
   requireSupabase()
-  await persistirAnaliseInterno(leadId, analise)
+  const usuarioId = await obterUsuarioAtualId()
+  await persistirAnaliseInterno(leadId, analise, analiseIA, usuarioId)
+}
+
+/**
+ * Fase 3B, item 26 do planejamento ("[Salvar análise]" no painel de IA,
+ * tanto no Radar quanto no CRM): persiste uma interpretação de IA já
+ * gerada e validada no servidor (ver api/ia-radar.js +
+ * schemaAnaliseComercial.js) junto com o Opportunity Score determinístico
+ * vigente no momento da análise — como uma NOVA linha de lead_analysis,
+ * nunca sobrescrevendo histórico anterior (mesma regra de
+ * registrarNovaAnalise). A IA nunca recalcula nem altera o score: `analise`
+ * é sempre o resultado de calcularOpportunityScore(), igual a qualquer
+ * outra chamada de persistirAnaliseInterno.
+ *
+ * @param {string} leadId
+ * @param {AnaliseRadar} analise - score determinístico vigente (nunca gerado/alterado pela IA)
+ * @param {{dados:Object, provider:string, model:string, promptVersao:string}} resultadoIA - saída já validada por schemaAnaliseComercial.validarAnaliseComercial()
+ */
+export async function salvarAnaliseIA(leadId, analise, resultadoIA) {
+  requireSupabase()
+  if (!resultadoIA?.dados) return
+  const usuarioId = await obterUsuarioAtualId()
+  await persistirAnaliseInterno(leadId, analise, resultadoIA, usuarioId)
 }
 
 export async function buscarUltimaAnalise(leadId) {
@@ -406,6 +456,85 @@ export async function buscarUltimaAnalise(leadId) {
     .maybeSingle()
   if (error) throw error
   return data
+}
+
+/**
+ * Fase 3B, item 32 do planejamento: "análise desatualizada" nunca pode ser
+ * escondida silenciosamente quando a evidência do lead mudou depois da
+ * última análise salva. Heurística deliberadamente simples e transparente
+ * (documentar isso no relatório final, não é um diff de evidências campo a
+ * campo): compara o instante em que a linha de lead_analysis foi criada com
+ * leads.updated_at — a trigger leads_set_updated_at já atualiza essa coluna
+ * em QUALQUER alteração do lead (confirmação manual de presença digital,
+ * mudança de status no Kanban, etc.), então este é um sinal "pode estar
+ * desatualizada" por cima (prefere avisar demais a esconder a
+ * possibilidade), não uma detecção exata de que a evidência específica
+ * usada pela IA mudou.
+ * @param {{created_at:string}} analiseRow - linha de lead_analysis (ex.: resultado de buscarUltimaAnalise)
+ * @param {{updated_at:string}} lead
+ */
+export function analiseEstaDesatualizada(analiseRow, lead) {
+  if (!analiseRow?.created_at || !lead?.updated_at) return false
+  return new Date(lead.updated_at).getTime() > new Date(analiseRow.created_at).getTime()
+}
+
+/**
+ * Fase 3B, item 17 do planejamento (mensagem de abordagem sugerida):
+ * persiste um rascunho gerado por IA em lead_messages (tabela já existente,
+ * reaproveitada — nenhuma tabela nova criada). Nunca marca `enviado`
+ * automaticamente: o envio real é sempre uma ação manual do usuário
+ * ([Abrir WhatsApp]); este serviço só guarda o texto para
+ * histórico/rastreabilidade de quem gerou/editou o quê.
+ * @param {string} leadId
+ * @param {{mensagemWhatsapp:string, canal?:string}} abordagem
+ */
+export async function salvarAbordagemGerada(leadId, { mensagemWhatsapp, canal = 'whatsapp' } = {}) {
+  requireSupabase()
+  if (!mensagemWhatsapp) return null
+  const { data, error } = await supabase
+    .from('lead_messages')
+    .insert({ lead_id: leadId, canal, rascunho: mensagemWhatsapp, criado_por_ia: true })
+    .select()
+    .single()
+  if (error) {
+    // Mesma regra de resiliência de persistirAnaliseInterno: falha ao
+    // salvar o rascunho não pode travar o fluxo de "[Abrir WhatsApp]" —
+    // é um complemento de histórico, não um pré-requisito para o usuário
+    // conseguir enviar a mensagem.
+    console.error('[LeadsService] falha ao persistir lead_messages', error)
+    return null
+  }
+  return data
+}
+
+/**
+ * Histórico de rascunhos de abordagem (gerados por IA ou manuais) de um
+ * lead, mais recentes primeiro — usado pelo painel de IA para mostrar
+ * tentativas anteriores.
+ * @param {string} leadId
+ */
+export async function buscarMensagensLead(leadId) {
+  requireSupabase()
+  const { data, error } = await supabase
+    .from('lead_messages')
+    .select('*')
+    .eq('lead_id', leadId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data
+}
+
+/**
+ * Marca um rascunho como aberto/utilizado quando o usuário clica
+ * [Abrir WhatsApp] — continua sendo só um registro de histórico (a ação de
+ * enviar a mensagem em si acontece no WhatsApp, fora deste sistema; nunca
+ * há envio automático aqui).
+ * @param {string} mensagemId
+ */
+export async function marcarMensagemComoAberta(mensagemId) {
+  requireSupabase()
+  const { error } = await supabase.from('lead_messages').update({ enviado: true }).eq('id', mensagemId)
+  if (error) console.error('[LeadsService] falha ao marcar lead_messages como aberta', error)
 }
 
 export async function atualizarStatus(leadId, novoStatus, { motivoPerda } = {}) {
