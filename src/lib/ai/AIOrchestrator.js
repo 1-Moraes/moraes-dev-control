@@ -2,36 +2,59 @@
 // itens 5 e 7 do planejamento). Mesmo papel que DiscoveryService.js tem
 // para o Radar (Fase 3A): este arquivo é o ÚNICO lugar que decide QUAL
 // provider de IA usar e em que ordem tentar — api/ia-radar.js (a Vercel
-// Function) chama só isto, nunca AnthropicProvider/OpenAIProvider
-// diretamente. Roda exclusivamente server-side.
+// Function) chama só isto, nunca os providers diretamente. Roda
+// exclusivamente server-side.
 //
 //   api/ia-radar.js
 //        ↓
 //   AIOrchestrator.executar()
 //        ↓ seleciona via AI_PRIMARY_PROVIDER/AI_FALLBACK_PROVIDER (env)
-//   AnthropicProvider  →  (se falha retryable/resposta_invalida)  →  OpenAIProvider
+//   GroqProvider  →  (se falha retryable/resposta_invalida)  →  GeminiProvider
 //        ↓
 //   { texto, provider, model, tokensEntrada, tokensSaida, duracaoMs }
 //
+// AJUSTE DE PRIORIDADE "CUSTO ZERO" (pedido explícito do João, depois da
+// implementação original desta fase ter sido feita com Anthropic
+// principal/OpenAI fallback): a ordem PADRÃO passou a ser Groq → Gemini,
+// os dois com camada gratuita, para a Moraes.Dev Control poder operar com
+// R$ 0 de custo inicial. Anthropic e OpenAI continuam implementados
+// (AnthropicProvider.js/OpenAIProvider.js, item 3 do ajuste: "preservados
+// como integrações futuras") mas ficam DESATIVADOS POR PADRÃO — só entram
+// em jogo se alguém setar AI_PRIMARY_PROVIDER/AI_FALLBACK_PROVIDER
+// explicitamente para 'anthropic'/'openai', uma decisão humana deliberada,
+// nunca automática. Nenhum provider pago é tentado como fallback de um
+// provider gratuito — a lista de candidatos nunca mistura os dois grupos
+// a menos que a env var peça isso explicitamente.
+//
 // Fallback é CONTROLADO (item 7): só tenta o segundo provider quando o
 // primeiro falha de um jeito que justifica tentar outro (credencial
-// ausente/inválida, limite, indisponibilidade, resposta inválida) — nunca
-// em erro de validação da PRÓPRIA requisição (esse erro se repetiria em
-// qualquer provider) e nunca chama os dois automaticamente "só para
-// garantir" (isso dobraria o custo sem necessidade, item 8).
+// ausente/inválida, limite — inclui cota gratuita esgotada —,
+// indisponibilidade, resposta inválida) — nunca em erro de validação da
+// PRÓPRIA requisição (esse erro se repetiria em qualquer provider) e nunca
+// chama os dois automaticamente "só para garantir" (isso dobraria o
+// consumo sem necessidade, item 8). Quando TODOS os providers configurados
+// falham (ex.: as duas cotas gratuitas esgotadas), o erro sobe classificado
+// — api/ia-radar.js devolve um aviso claro e nunca deixa Radar/CRM
+// dependerem disso para continuar funcionando (item 10 do ajuste).
 
 import * as AnthropicProvider from './providers/AnthropicProvider.js'
 import * as OpenAIProvider from './providers/OpenAIProvider.js'
+import * as GroqProvider from './providers/GroqProvider.js'
+import * as GeminiProvider from './providers/GeminiProvider.js'
 import { ProviderError } from './providers/ProviderError.js'
 import { obterLimites } from './limites.js'
 
-const PROVIDERS = { anthropic: AnthropicProvider, openai: OpenAIProvider }
+const PROVIDERS = { groq: GroqProvider, gemini: GeminiProvider, anthropic: AnthropicProvider, openai: OpenAIProvider }
+
+// Ordem padrão: só os dois gratuitos. Anthropic/OpenAI nunca entram aqui
+// implicitamente — só se alguém setar as env vars explicitamente para eles.
+const ORDEM_PADRAO = ['groq', 'gemini']
 
 function ordemProviders() {
-  const primario = process.env.AI_PRIMARY_PROVIDER || 'anthropic'
-  const fallback = process.env.AI_FALLBACK_PROVIDER || 'openai'
+  const primario = process.env.AI_PRIMARY_PROVIDER || 'groq'
+  const fallback = process.env.AI_FALLBACK_PROVIDER || 'gemini'
   const nomes = [primario, fallback].filter((n, i, arr) => PROVIDERS[n] && arr.indexOf(n) === i)
-  return nomes.length ? nomes : ['anthropic', 'openai']
+  return nomes.length ? nomes : ORDEM_PADRAO
 }
 
 /**

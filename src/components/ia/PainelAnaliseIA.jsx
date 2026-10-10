@@ -27,6 +27,7 @@ const MENSAGEM_ESTADO = {
   token_invalido: 'Sessão expirada. Saia e entre novamente.',
   sem_permissao: 'Seu usuário não tem permissão para executar análises de IA.',
   limite_utilizacao: 'Limite de análises de IA por hora atingido. Tente novamente mais tarde.',
+  limite_provedor: 'A cota gratuita de IA foi esgotada por agora. Tente novamente mais tarde — o Radar e o CRM continuam funcionando normalmente.',
   provedor_indisponivel: 'O provedor de IA está indisponível agora. Tente novamente em alguns instantes.',
   resposta_invalida: 'A IA respondeu em um formato inesperado. Tente novamente.',
   payload_invalido: 'Dados insuficientes para analisar esta empresa.',

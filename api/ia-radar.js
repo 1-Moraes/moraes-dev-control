@@ -147,10 +147,18 @@ export default async function handler(req, res) {
       desconhecido: 'erro',
     }
     const estado = mapaEstado[erro.tipo] || 'erro'
+    // Mensagem específica para `limite_provedor` (item 10 do ajuste
+    // "custo zero"): quando a cota GRATUITA de todos os providers
+    // configurados se esgota, isso nunca é um erro genérico — é um aviso
+    // claro de que a análise de IA parou temporariamente, e nunca afeta
+    // Radar/CRM (que não dependem da IA para nada).
+    const mapaMensagem = {
+      limite_provedor: 'A cota gratuita de IA foi esgotada por agora (todos os provedores configurados sinalizaram limite). Novas análises de IA ficam indisponíveis até a cota renovar — o Radar e o CRM continuam funcionando normalmente.',
+    }
     res.status(estado === 'ia_nao_configurada' ? 200 : 502).json({
       status: estado === 'ia_nao_configurada' ? 'nao_configurada' : 'erro',
       estado,
-      mensagemErro: 'Não foi possível concluir a análise de IA agora. Tente novamente em alguns instantes.',
+      mensagemErro: mapaMensagem[estado] || 'Não foi possível concluir a análise de IA agora. Tente novamente em alguns instantes.',
       timestamp,
     })
     return
