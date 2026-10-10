@@ -45,8 +45,9 @@ export class ProviderError extends Error {
    * @param {boolean} [opts.podeTentarOutroProvider] - força a decisão de fallback independente do tipo (ex.: resposta_invalida ainda permite tentar o outro provider)
    * @param {number} [opts.statusHttp] - status HTTP cru devolvido pelo provedor, quando a falha vier de uma resposta HTTP (diagnóstico — nunca usado para decidir fallback, só para log/observabilidade, ver api/ia-radar.js)
    * @param {string} [opts.etapa] - em que etapa do pipeline a falha ocorreu ('chamada_provider' | 'parse_resposta' | 'validacao_schema'), usado só para diagnóstico/log
+   * @param {string} [opts.modelo] - identificador do modelo (env var do provider, ex.: GROQ_MODEL) que estava configurado no momento da falha — diagnóstico (investigação do 502 de produção descobriu que, sem isto, `ai_logs.model` ficava sempre "desconhecido" em qualquer falha de provider, mesmo quando o modelo configurado era exatamente a causa)
    */
-  constructor(tipo, mensagem, { podeTentarOutroProvider, statusHttp, etapa } = {}) {
+  constructor(tipo, mensagem, { podeTentarOutroProvider, statusHttp, etapa, modelo } = {}) {
     super(mensagem)
     this.name = 'ProviderError'
     this.tipo = TIPOS_ERRO_PROVIDER.includes(tipo) ? tipo : 'desconhecido'
@@ -54,5 +55,6 @@ export class ProviderError extends Error {
     this.podeTentarOutroProvider = podeTentarOutroProvider ?? (this.retryable || this.tipo === 'resposta_invalida')
     this.statusHttp = statusHttp ?? null
     this.etapa = etapa || 'chamada_provider'
+    this.modelo = modelo ?? null
   }
 }

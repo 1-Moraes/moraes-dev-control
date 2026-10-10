@@ -75,8 +75,11 @@ describe('AIOrchestrator / seleção de provedor principal e fallback (prioridad
     const { executar } = await import('../AIOrchestrator.js')
     const resp = await executar({ sistemaPrompt: 's', mensagemUsuario: 'u' })
     expect(resp.provider).toBe('gemini')
+    // `modelo` (diagnóstico do 502 de produção investigado via ai_logs:
+    // GroqProvider agora informa qual GROQ_MODEL foi tentado mesmo numa
+    // falha, pra ai_logs.model parar de ficar sempre "desconhecido").
     expect(resp.tentativas).toEqual([
-      { provider: 'groq', sucesso: false, tipoErro: 'limite' },
+      { provider: 'groq', sucesso: false, tipoErro: 'limite', modelo: 'llama-3.1-8b-instant' },
       { provider: 'gemini', sucesso: true },
     ])
   })

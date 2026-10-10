@@ -152,7 +152,7 @@ export default async function handler(req, res) {
 
     await registrarLog(clienteSupabase, {
       provider: ultimaTentativa?.provider || 'desconhecido',
-      model: 'desconhecido',
+      model: ultimaTentativa?.modelo || 'desconhecido',
       feature: tarefa,
       sucesso: false,
       erro: diagnostico.slice(0, 300),

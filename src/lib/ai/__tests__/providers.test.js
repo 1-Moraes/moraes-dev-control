@@ -206,6 +206,57 @@ describe('GroqProvider (provider PRINCIPAL padrão, free tier)', () => {
     const erro = await GroqProvider.gerar({ sistemaPrompt: 's', mensagemUsuario: 'u', maxTokens: 10, timeoutMs: 1000 }).catch((e) => e)
     expect(erro.tipo).toBe('resposta_invalida')
   })
+
+  // Regressão direta do 502 investigado em PRODUÇÃO via Vercel+Supabase
+  // (requestId 1474521c-8236-4c3a-a45e-be7022a5d11b): a Groq respondeu
+  // HTTP 404 (status não coberto por nenhuma classificação específica —
+  // cai em `desconhecido`) e, até esta correção, o provider nunca lia o
+  // corpo da resposta de erro, então `ai_logs.erro` só tinha "Groq
+  // respondeu HTTP 404 (não classificado)" — sem o `error.code`/
+  // `error.message` que a própria Groq devolve (ex.: modelo inexistente
+  // ou descontinuado), e `ai_logs.model` ficava sempre "desconhecido".
+  it('404 (ex.: GROQ_MODEL inexistente/descontinuado) continua "desconhecido", mas agora inclui o detalhe real da Groq e o modelo tentado', async () => {
+    process.env.GROQ_API_KEY = 'gsk-teste'
+    process.env.GROQ_MODEL = 'llama3-70b-8192' // nome de modelo real descontinuado pela Groq em 2025
+    global.fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: { message: 'The model `llama3-70b-8192` does not exist or you do not have access to it.', code: 'model_not_found' } }),
+    })
+    const erro = await GroqProvider.gerar({ sistemaPrompt: 's', mensagemUsuario: 'u', maxTokens: 10, timeoutMs: 1000 }).catch((e) => e)
+    expect(erro).toBeInstanceOf(ProviderError)
+    expect(erro.tipo).toBe('desconhecido')
+    expect(erro.retryable).toBe(false)
+    expect(erro.statusHttp).toBe(404)
+    expect(erro.modelo).toBe('llama3-70b-8192')
+    expect(erro.message).toContain('model_not_found')
+    expect(erro.message).toContain('does not exist')
+  })
+
+  it('corpo de erro sem JSON válido (ou sem campo error) não quebra a classificação — apenas não adiciona detalhe', async () => {
+    process.env.GROQ_API_KEY = 'gsk-teste'
+    process.env.GROQ_MODEL = 'llama-3.1-8b-instant'
+    global.fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => {
+        throw new Error('corpo vazio')
+      },
+    })
+    const erro = await GroqProvider.gerar({ sistemaPrompt: 's', mensagemUsuario: 'u', maxTokens: 10, timeoutMs: 1000 }).catch((e) => e)
+    expect(erro.tipo).toBe('desconhecido')
+    expect(erro.statusHttp).toBe(404)
+    expect(erro.message).toContain('não classificado')
+    expect(erro.message).not.toContain('Detalhe da Groq')
+  })
+
+  it('modelo tentado nunca some em erros clássicos (429/401) — necessário pra ai_logs.model parar de ficar "desconhecido"', async () => {
+    process.env.GROQ_API_KEY = 'gsk-teste'
+    process.env.GROQ_MODEL = 'llama-3.3-70b-versatile'
+    global.fetch.mockResolvedValueOnce({ ok: false, status: 429, json: async () => ({}) })
+    const erro = await GroqProvider.gerar({ sistemaPrompt: 's', mensagemUsuario: 'u', maxTokens: 10, timeoutMs: 1000 }).catch((e) => e)
+    expect(erro.modelo).toBe('llama-3.3-70b-versatile')
+  })
 })
 
 describe('GeminiProvider (provider de FALLBACK padrão, free tier)', () => {

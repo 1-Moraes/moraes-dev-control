@@ -179,4 +179,61 @@ describe('api/ia-radar handler', () => {
     expect(res._body.requestId).toBeTruthy()
     expect(res._body.mensagemErro).toContain('cota gratuita')
   })
+
+  // Regressão direta do diagnóstico definitivo do 502 em produção
+  // (requestId 1474521c-8236-4c3a-a45e-be7022a5d11b, confirmado via
+  // Supabase ai_logs: provider=groq, statusHttp=404, etapa=chamada_provider,
+  // tipo=desconhecido): até esta correção, `registrarLog` sempre escrevia
+  // `model: 'desconhecido'` em QUALQUER falha de provider — mesmo quando
+  // o próprio AIOrchestrator/provider já sabia qual modelo (GROQ_MODEL)
+  // tinha sido tentado, que era exatamente a causa real do erro (modelo
+  // inexistente/descontinuado). Isso nunca pode voltar a acontecer: o
+  // `model` gravado em ai_logs precisa refletir o modelo da última
+  // tentativa sempre que o provider/orquestrador o informar.
+  it('erro de provider com modelo conhecido na última tentativa: ai_logs.model usa esse modelo, nunca "desconhecido"', async () => {
+    const chamadasInsert = []
+    const clienteComCaptura = {
+      from: () => ({
+        insert: async (linha) => {
+          chamadasInsert.push(linha)
+          return { error: null }
+        },
+      }),
+    }
+    autenticarEAutorizar.mockResolvedValue({ autorizado: true, userId: 'u1', clienteSupabase: clienteComCaptura })
+    const erro = new Error('Groq respondeu HTTP 404 (não classificado). Detalhe da Groq: model_not_found: The model `llama3-70b-8192` does not exist or you do not have access to it.')
+    erro.tipo = 'desconhecido'
+    erro.statusHttp = 404
+    erro.etapa = 'chamada_provider'
+    erro.tentativas = [{ provider: 'groq', sucesso: false, tipoErro: 'desconhecido', modelo: 'llama3-70b-8192' }]
+    executar.mockRejectedValue(erro)
+    const res = fakeRes()
+    await handler({ method: 'POST', headers: { authorization: 'Bearer t' }, body: { tarefa: 'analisar_oportunidade', empresaCandidata: EMPRESA_VALIDA } }, res)
+    expect(res._status).toBe(502)
+    expect(res._body.estado).toBe('erro')
+    expect(chamadasInsert).toHaveLength(1)
+    expect(chamadasInsert[0].provider).toBe('groq')
+    expect(chamadasInsert[0].model).toBe('llama3-70b-8192')
+    expect(chamadasInsert[0].erro).toContain('statusHttpProvedor=404')
+  })
+
+  it('erro de provider SEM modelo informado na tentativa (ex.: credencial_ausente) ainda cai em "desconhecido" com segurança', async () => {
+    const chamadasInsert = []
+    const clienteComCaptura = {
+      from: () => ({
+        insert: async (linha) => {
+          chamadasInsert.push(linha)
+          return { error: null }
+        },
+      }),
+    }
+    autenticarEAutorizar.mockResolvedValue({ autorizado: true, userId: 'u1', clienteSupabase: clienteComCaptura })
+    const erro = new Error('groq não configurado.')
+    erro.tipo = 'credencial_ausente'
+    erro.tentativas = [{ provider: 'groq', sucesso: false, tipoErro: 'credencial_ausente' }]
+    executar.mockRejectedValue(erro)
+    const res = fakeRes()
+    await handler({ method: 'POST', headers: { authorization: 'Bearer t' }, body: { tarefa: 'analisar_oportunidade', empresaCandidata: EMPRESA_VALIDA } }, res)
+    expect(chamadasInsert[0].model).toBe('desconhecido')
+  })
 })

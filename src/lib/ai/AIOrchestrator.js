@@ -114,7 +114,12 @@ export async function executar({ sistemaPrompt, mensagemUsuario }) {
       return { ...resposta, tentativas }
     } catch (erro) {
       const erroClassificado = erro instanceof ProviderError ? erro : new ProviderError('desconhecido', erro.message)
-      tentativas.push({ provider: nomes[i], sucesso: false, tipoErro: erroClassificado.tipo })
+      // `modelo` (diagnóstico do 502 de produção investigado via ai_logs:
+      // sem isto, `ai_logs.model` ficava sempre "desconhecido" em QUALQUER
+      // falha de provider — mesmo quando o próprio modelo configurado era
+      // a causa, como no caso real) vem do ProviderError quando o provider
+      // já sabia qual modelo tentou (ver providers/GroqProvider.js).
+      tentativas.push({ provider: nomes[i], sucesso: false, tipoErro: erroClassificado.tipo, modelo: erroClassificado.modelo })
       ultimoErro = erroClassificado
 
       const haProximoProvider = i < nomes.length - 1
