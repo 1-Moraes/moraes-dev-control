@@ -58,6 +58,7 @@ export default function PainelAnaliseIA({ empresaCandidata, analise, leadId, ana
 
   const [estado, setEstado] = useState(analiseIASalva ? 'concluida' : 'idle') // idle | carregando | concluida | erro
   const [erroEstado, setErroEstado] = useState(null)
+  const [erroRequestId, setErroRequestId] = useState(null)
   const [resultado, setResultado] = useState(
     analiseIASalva ? { dados: analiseIASalva.dados, provider: analiseIASalva.provider, model: analiseIASalva.model, promptVersao: analiseIASalva.promptVersao } : null
   )
@@ -75,6 +76,7 @@ export default function PainelAnaliseIA({ empresaCandidata, analise, leadId, ana
   async function analisar() {
     setEstado('carregando')
     setErroEstado(null)
+    setErroRequestId(null)
     const resp = await analisarOportunidade({ accessToken, empresaCandidata, analise, leadId })
     if (resp?.status === 'ok') {
       setResultado({ dados: resp.dados, provider: resp.provider, model: resp.model, promptVersao: resp.promptVersao })
@@ -82,6 +84,7 @@ export default function PainelAnaliseIA({ empresaCandidata, analise, leadId, ana
       setSalvo(false)
     } else {
       setErroEstado(resp?.estado || 'erro')
+      setErroRequestId(resp?.requestId || null)
       setEstado('erro')
     }
   }
@@ -192,6 +195,7 @@ export default function PainelAnaliseIA({ empresaCandidata, analise, leadId, ana
           <p className="flex items-start gap-1.5 rounded-lg bg-(--color-danger)/10 px-2.5 py-1.5 text-[11px] text-(--color-danger)">
             <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {MENSAGEM_ESTADO[erroEstado] || MENSAGEM_ESTADO.erro}
           </p>
+          {erroRequestId ? <p className="mt-1 text-[10px] text-(--color-ink-secondary)">Ref: {erroRequestId}</p> : null}
           <button type="button" onClick={analisar} className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-(--color-primary) hover:underline">
             <RotateCcw size={11} /> Tentar novamente
           </button>

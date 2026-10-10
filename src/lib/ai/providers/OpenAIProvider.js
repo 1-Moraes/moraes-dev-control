@@ -57,28 +57,28 @@ export async function gerar({ sistemaPrompt, mensagemUsuario, maxTokens, timeout
   }
 
   if (resp.status === 401 || resp.status === 403) {
-    throw new ProviderError('credencial_invalida', `OpenAI rejeitou a credencial (HTTP ${resp.status}).`)
+    throw new ProviderError('credencial_invalida', `OpenAI rejeitou a credencial (HTTP ${resp.status}).`, { statusHttp: resp.status })
   }
   if (resp.status === 429) {
-    throw new ProviderError('limite', 'OpenAI sinalizou limite de uso (HTTP 429).')
+    throw new ProviderError('limite', 'OpenAI sinalizou limite de uso (HTTP 429).', { statusHttp: resp.status })
   }
   if (resp.status >= 500) {
-    throw new ProviderError('indisponivel', `OpenAI indisponível (HTTP ${resp.status}).`)
+    throw new ProviderError('indisponivel', `OpenAI indisponível (HTTP ${resp.status}).`, { statusHttp: resp.status })
   }
   if (!resp.ok) {
-    throw new ProviderError('desconhecido', `OpenAI respondeu HTTP ${resp.status} (não classificado).`)
+    throw new ProviderError('desconhecido', `OpenAI respondeu HTTP ${resp.status} (não classificado).`, { statusHttp: resp.status })
   }
 
   let dados
   try {
     dados = await resp.json()
   } catch {
-    throw new ProviderError('resposta_invalida', 'OpenAI respondeu um corpo que não é JSON válido.')
+    throw new ProviderError('resposta_invalida', 'OpenAI respondeu um corpo que não é JSON válido.', { statusHttp: resp.status, etapa: 'parse_resposta' })
   }
 
   const texto = dados.choices?.[0]?.message?.content
   if (typeof texto !== 'string') {
-    throw new ProviderError('resposta_invalida', 'Resposta da OpenAI não contém conteúdo de mensagem.')
+    throw new ProviderError('resposta_invalida', 'Resposta da OpenAI não contém conteúdo de mensagem.', { statusHttp: resp.status, etapa: 'parse_resposta' })
   }
 
   return {

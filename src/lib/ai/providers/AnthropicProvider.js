@@ -72,28 +72,28 @@ export async function gerar({ sistemaPrompt, mensagemUsuario, maxTokens, timeout
   }
 
   if (resp.status === 401 || resp.status === 403) {
-    throw new ProviderError('credencial_invalida', `Anthropic rejeitou a credencial (HTTP ${resp.status}).`)
+    throw new ProviderError('credencial_invalida', `Anthropic rejeitou a credencial (HTTP ${resp.status}).`, { statusHttp: resp.status })
   }
   if (resp.status === 429) {
-    throw new ProviderError('limite', 'Anthropic sinalizou limite de uso (HTTP 429).')
+    throw new ProviderError('limite', 'Anthropic sinalizou limite de uso (HTTP 429).', { statusHttp: resp.status })
   }
   if (resp.status >= 500) {
-    throw new ProviderError('indisponivel', `Anthropic indisponível (HTTP ${resp.status}).`)
+    throw new ProviderError('indisponivel', `Anthropic indisponível (HTTP ${resp.status}).`, { statusHttp: resp.status })
   }
   if (!resp.ok) {
-    throw new ProviderError('desconhecido', `Anthropic respondeu HTTP ${resp.status} (não classificado).`)
+    throw new ProviderError('desconhecido', `Anthropic respondeu HTTP ${resp.status} (não classificado).`, { statusHttp: resp.status })
   }
 
   let dados
   try {
     dados = await resp.json()
   } catch {
-    throw new ProviderError('resposta_invalida', 'Anthropic respondeu um corpo que não é JSON válido.')
+    throw new ProviderError('resposta_invalida', 'Anthropic respondeu um corpo que não é JSON válido.', { statusHttp: resp.status, etapa: 'parse_resposta' })
   }
 
   const texto = dados.content?.find((bloco) => bloco.type === 'text')?.text
   if (typeof texto !== 'string') {
-    throw new ProviderError('resposta_invalida', 'Resposta da Anthropic não contém um bloco de texto.')
+    throw new ProviderError('resposta_invalida', 'Resposta da Anthropic não contém um bloco de texto.', { statusHttp: resp.status, etapa: 'parse_resposta' })
   }
 
   return {

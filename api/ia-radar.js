@@ -51,6 +51,11 @@ export default async function handler(req, res) {
   }
 
   const timestamp = new Date().toISOString()
+  // requestId de correlação (diagnóstico — investigação do 502 reportado em
+  // produção pediu explicitamente "request ID de correlação" nos logs e na
+  // resposta ao usuário, pra conseguir cruzar um erro relatado com a linha
+  // correspondente em ai_logs sem precisar logar prompt/resposta/segredos).
+  const requestId = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
   const token = extrairBearerToken(req.headers)
   const autenticacao = await autenticarEAutorizar(token)
 
@@ -62,7 +67,7 @@ export default async function handler(req, res) {
       token_invalido: 'Sessão inválida ou expirada. Faça login novamente.',
       sem_permissao: 'Seu usuário não tem permissão para executar análises de IA.',
     }
-    res.status(mapaEstadoHttp[autenticacao.motivo] || 401).json({ status: 'erro', estado: autenticacao.motivo, mensagemErro: mapaMensagem[autenticacao.motivo] })
+    res.status(mapaEstadoHttp[autenticacao.motivo] || 401).json({ status: 'erro', estado: autenticacao.motivo, mensagemErro: mapaMensagem[autenticacao.motivo], requestId })
     return
   }
 
@@ -73,26 +78,26 @@ export default async function handler(req, res) {
   // tamanho") — nunca confia em nada vindo do cliente sem checar forma e
   // tamanho antes de gastar uma chamada de IA.
   if (!TAREFAS_VALIDAS.includes(tarefa)) {
-    res.status(400).json({ status: 'erro', estado: 'payload_invalido', mensagemErro: 'Tarefa inválida.' })
+    res.status(400).json({ status: 'erro', estado: 'payload_invalido', mensagemErro: 'Tarefa inválida.', requestId })
     return
   }
   if (!empresaCandidata || typeof empresaCandidata !== 'object' || Array.isArray(empresaCandidata)) {
-    res.status(400).json({ status: 'erro', estado: 'payload_invalido', mensagemErro: 'Dados da empresa ausentes ou inválidos.' })
+    res.status(400).json({ status: 'erro', estado: 'payload_invalido', mensagemErro: 'Dados da empresa ausentes ou inválidos.', requestId })
     return
   }
   if (leadId != null && typeof leadId !== 'string') {
-    res.status(400).json({ status: 'erro', estado: 'payload_invalido', mensagemErro: 'leadId inválido.' })
+    res.status(400).json({ status: 'erro', estado: 'payload_invalido', mensagemErro: 'leadId inválido.', requestId })
     return
   }
   if (instrucoesAdicionais != null && (typeof instrucoesAdicionais !== 'string' || instrucoesAdicionais.length > INSTRUCOES_ADICIONAIS_MAX_LEN)) {
-    res.status(400).json({ status: 'erro', estado: 'payload_invalido', mensagemErro: 'Instruções adicionais inválidas ou longas demais.' })
+    res.status(400).json({ status: 'erro', estado: 'payload_invalido', mensagemErro: 'Instruções adicionais inválidas ou longas demais.', requestId })
     return
   }
 
   const limites = obterLimites()
   const tamanhoPayload = JSON.stringify(req.body || {}).length
   if (tamanhoPayload > limites.tamanhoMaximoPayloadBytes) {
-    res.status(413).json({ status: 'erro', estado: 'payload_muito_grande', mensagemErro: 'Dados enviados excedem o limite permitido.' })
+    res.status(413).json({ status: 'erro', estado: 'payload_muito_grande', mensagemErro: 'Dados enviados excedem o limite permitido.', requestId })
     return
   }
 
@@ -100,7 +105,7 @@ export default async function handler(req, res) {
   // qualquer chamada de IA.
   const { dentroDoLimite, usoAtual } = await verificarLimiteUso(clienteSupabase, userId, limites.limiteRequisicoesPorUsuarioPorHora)
   if (!dentroDoLimite) {
-    res.status(429).json({ status: 'erro', estado: 'limite_utilizacao', mensagemErro: `Limite de ${limites.limiteRequisicoesPorUsuarioPorHora} análises de IA por hora atingido.` })
+    res.status(429).json({ status: 'erro', estado: 'limite_utilizacao', mensagemErro: `Limite de ${limites.limiteRequisicoesPorUsuarioPorHora} análises de IA por hora atingido.`, requestId })
     return
   }
 
@@ -112,7 +117,8 @@ export default async function handler(req, res) {
     res.status(200).json({
       status: 'nao_configurada',
       estado: 'ia_nao_configurada',
-      mensagemErro: 'IA ainda não configurada. Configure uma chave de API (ANTHROPIC_API_KEY+ANTHROPIC_MODEL ou OPENAI_API_KEY+OPENAI_MODEL) para habilitar análises.',
+      mensagemErro: 'IA ainda não configurada. Configure uma chave de API (GROQ_API_KEY+GROQ_MODEL ou GEMINI_API_KEY+GEMINI_MODEL) para habilitar análises.',
+      requestId,
       timestamp,
     })
     return
@@ -126,12 +132,30 @@ export default async function handler(req, res) {
   try {
     resultadoIA = await executarIA({ sistemaPrompt: PROMPT_COMERCIAL_SISTEMA, mensagemUsuario })
   } catch (erro) {
+    // Diagnóstico sanitizado (nunca prompt/resposta/credencial — só o que
+    // ajuda a investigar sem expor nada sensível): provider, status HTTP
+    // cru do provedor (quando a falha vier de uma resposta HTTP), etapa do
+    // pipeline em que parou, e o requestId pra cruzar com o que o usuário
+    // reporta. `erro.etapa`/`erro.statusHttp` vêm de ProviderError (ver
+    // providers/ProviderError.js) — ausentes (null/undefined) quando a
+    // falha não é de uma resposta HTTP (ex.: credencial_ausente).
+    const ultimaTentativa = erro.tentativas?.[erro.tentativas.length - 1]
+    const diagnostico = [
+      `tipo=${erro.tipo || 'desconhecido'}`,
+      `etapa=${erro.etapa || 'desconhecida'}`,
+      erro.statusHttp != null ? `statusHttpProvedor=${erro.statusHttp}` : null,
+      `requestId=${requestId}`,
+      String(erro.message || '').slice(0, 150),
+    ]
+      .filter(Boolean)
+      .join(' | ')
+
     await registrarLog(clienteSupabase, {
-      provider: erro.tentativas?.[erro.tentativas.length - 1]?.provider || 'desconhecido',
+      provider: ultimaTentativa?.provider || 'desconhecido',
       model: 'desconhecido',
       feature: tarefa,
       sucesso: false,
-      erro: `${erro.tipo || 'desconhecido'}: ${String(erro.message || '').slice(0, 300)}`,
+      erro: diagnostico.slice(0, 300),
       duracao_ms: null,
       usuario_id: userId,
       entidade_tipo: entidadeTipo,
@@ -159,11 +183,18 @@ export default async function handler(req, res) {
       status: estado === 'ia_nao_configurada' ? 'nao_configurada' : 'erro',
       estado,
       mensagemErro: mapaMensagem[estado] || 'Não foi possível concluir a análise de IA agora. Tente novamente em alguns instantes.',
+      requestId,
       timestamp,
     })
     return
   }
 
+  // A chamada ao provider teve sucesso (fetch concluído, HTTP 200) — a
+  // partir daqui, qualquer falha é de PARSE/SCHEMA da resposta, nunca do
+  // provider/chave (ver schemaAnaliseComercial.js: desde a correção do
+  // 502 reportado em produção, o parse já tolera JSON envolto em markdown
+  // antes de validar a estrutura — o que sobra aqui é só resposta
+  // genuinamente fora do formato pedido).
   const validador = tarefa === 'gerar_abordagem' ? validarAbordagem : validarAnaliseComercial
   const validacao = validador(resultadoIA.texto)
 
@@ -175,7 +206,7 @@ export default async function handler(req, res) {
     tokens_saida: resultadoIA.tokensSaida,
     duracao_ms: resultadoIA.duracaoMs,
     sucesso: validacao.valido,
-    erro: validacao.valido ? null : `resposta_invalida: ${validacao.erros.join('; ')}`.slice(0, 300),
+    erro: validacao.valido ? null : `etapa=validacao_schema | requestId=${requestId} | ${validacao.erros.join('; ')}`.slice(0, 300),
     usuario_id: userId,
     entidade_tipo: entidadeTipo,
     entidade_id: leadId || null,
@@ -186,6 +217,7 @@ export default async function handler(req, res) {
       status: 'erro',
       estado: 'resposta_invalida',
       mensagemErro: 'A IA respondeu em um formato inesperado. Tente novamente.',
+      requestId,
       timestamp,
     })
     return
@@ -200,6 +232,7 @@ export default async function handler(req, res) {
     promptVersao: PROMPT_COMERCIAL_VERSAO,
     usoNaUltimaHora: usoAtual + 1,
     limitePorHora: limites.limiteRequisicoesPorUsuarioPorHora,
+    requestId,
     timestamp,
   })
 }

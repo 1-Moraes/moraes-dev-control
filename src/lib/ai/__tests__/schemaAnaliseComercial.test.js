@@ -75,6 +75,60 @@ describe('schemaAnaliseComercial / validarAnaliseComercial', () => {
   })
 })
 
+describe('schemaAnaliseComercial / tolerância a formatação (regressão do 502 em produção com Groq)', () => {
+  // Investigação do 502 reportado com GROQ_API_KEY/GROQ_MODEL configurados
+  // corretamente: o log da Vercel confirmou que a chamada a
+  // api.groq.com/openai/v1/chat/completions teve sucesso e o log chegou a
+  // ai_logs — ou seja, a causa nunca foi credencial/modelo. A causa real
+  // era aqui: modelos abertos servidos pelo Groq (Llama/GPT-OSS/Qwen)
+  // frequentemente ignoram a instrução "sem markdown" do prompt de
+  // sistema e envolvem o JSON em um bloco de código, o que fazia
+  // `JSON.parse` falhar e a resposta ser classificada como
+  // `resposta_invalida` (502), mesmo com o conteúdo da análise correto.
+
+  it('aceita JSON envolto em um bloco de código markdown ```json ... ``` (comportamento real observado em modelos Groq)', () => {
+    const envolto = '```json\n' + RESPOSTA_VALIDA + '\n```'
+    const r = validarAnaliseComercial(envolto)
+    expect(r.valido).toBe(true)
+    expect(r.dados.resumo_comercial).toContain('Barbearia')
+  })
+
+  it('aceita JSON envolto em um bloco de código markdown sem a palavra "json" (``` ... ```)', () => {
+    const envolto = '```\n' + RESPOSTA_VALIDA + '\n```'
+    const r = validarAnaliseComercial(envolto)
+    expect(r.valido).toBe(true)
+  })
+
+  it('aceita JSON com um preâmbulo/posfácio em prosa fora do bloco de código', () => {
+    const comTexto = `Aqui está a análise solicitada:\n\n${RESPOSTA_VALIDA}\n\nEspero que ajude!`
+    const r = validarAnaliseComercial(comTexto)
+    expect(r.valido).toBe(true)
+    expect(r.dados.oportunidade_principal).toContain('centralizar')
+  })
+
+  it('continua rejeitando texto genuinamente malformado (chaves nunca balanceiam) — a tolerância não "conserta" conteúdo quebrado', () => {
+    const r = validarAnaliseComercial('isto não é json {{{')
+    expect(r.valido).toBe(false)
+    expect(r.dados).toBeNull()
+  })
+
+  it('continua rejeitando um objeto estruturalmente inválido mesmo depois de extraído de dentro de um bloco markdown', () => {
+    const invalidoDentroDeBloco = '```json\n' + JSON.stringify({ oportunidade_principal: 'só isso' }) + '\n```'
+    const r = validarAnaliseComercial(invalidoDentroDeBloco)
+    expect(r.valido).toBe(false)
+    expect(r.erros.some((e) => e.includes('resumo_comercial'))).toBe(true)
+  })
+
+  it('não confunde chaves dentro de strings com o fim do objeto (ex.: "a: {b}" dentro de um valor)', () => {
+    const base = JSON.parse(RESPOSTA_VALIDA)
+    base.resumo_comercial = 'Texto contendo uma chave solta: } só pra confundir parser ingênuo'
+    const comPreambulo = `Resultado:\n${JSON.stringify(base)}\nFim.`
+    const r = validarAnaliseComercial(comPreambulo)
+    expect(r.valido).toBe(true)
+    expect(r.dados.resumo_comercial).toContain('chave solta')
+  })
+})
+
 describe('schemaAnaliseComercial / validarAbordagem', () => {
   it('exige o campo abordagem preenchido mesmo quando o resto é mínimo', () => {
     const r = validarAbordagem(JSON.stringify({ resumo_comercial: 'x', oportunidade_principal: 'y' }))

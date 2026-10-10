@@ -81,23 +81,23 @@ export async function gerar({ sistemaPrompt, mensagemUsuario, maxTokens, timeout
   }
 
   if (resp.status === 401 || resp.status === 403) {
-    throw new ProviderError('credencial_invalida', `Gemini rejeitou a credencial (HTTP ${resp.status}).`)
+    throw new ProviderError('credencial_invalida', `Gemini rejeitou a credencial (HTTP ${resp.status}).`, { statusHttp: resp.status })
   }
   if (resp.status === 429) {
-    throw new ProviderError('limite', 'Gemini sinalizou limite de uso do Free Tier (HTTP 429).')
+    throw new ProviderError('limite', 'Gemini sinalizou limite de uso do Free Tier (HTTP 429).', { statusHttp: resp.status })
   }
   if (resp.status >= 500) {
-    throw new ProviderError('indisponivel', `Gemini indisponível (HTTP ${resp.status}).`)
+    throw new ProviderError('indisponivel', `Gemini indisponível (HTTP ${resp.status}).`, { statusHttp: resp.status })
   }
   if (!resp.ok) {
-    throw new ProviderError('desconhecido', `Gemini respondeu HTTP ${resp.status} (não classificado).`)
+    throw new ProviderError('desconhecido', `Gemini respondeu HTTP ${resp.status} (não classificado).`, { statusHttp: resp.status })
   }
 
   let dados
   try {
     dados = await resp.json()
   } catch {
-    throw new ProviderError('resposta_invalida', 'Gemini respondeu um corpo que não é JSON válido.')
+    throw new ProviderError('resposta_invalida', 'Gemini respondeu um corpo que não é JSON válido.', { statusHttp: resp.status, etapa: 'parse_resposta' })
   }
 
   // Gemini pode devolver 200 com `candidates` vazio (ex.: bloqueado por
@@ -106,7 +106,7 @@ export async function gerar({ sistemaPrompt, mensagemUsuario, maxTokens, timeout
   const partes = dados.candidates?.[0]?.content?.parts
   const texto = Array.isArray(partes) ? partes.map((p) => p.text).filter((t) => typeof t === 'string').join('') : undefined
   if (!texto) {
-    throw new ProviderError('resposta_invalida', 'Resposta da Gemini não contém conteúdo de texto utilizável.')
+    throw new ProviderError('resposta_invalida', 'Resposta da Gemini não contém conteúdo de texto utilizável.', { statusHttp: resp.status, etapa: 'parse_resposta' })
   }
 
   return {

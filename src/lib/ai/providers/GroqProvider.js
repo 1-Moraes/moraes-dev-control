@@ -72,32 +72,32 @@ export async function gerar({ sistemaPrompt, mensagemUsuario, maxTokens, timeout
   }
 
   if (resp.status === 401 || resp.status === 403) {
-    throw new ProviderError('credencial_invalida', `Groq rejeitou a credencial (HTTP ${resp.status}).`)
+    throw new ProviderError('credencial_invalida', `Groq rejeitou a credencial (HTTP ${resp.status}).`, { statusHttp: resp.status })
   }
   if (resp.status === 429) {
     // No free tier, 429 cobre tanto "rate limit por minuto" quanto "cota
     // diária/mensal gratuita esgotada" — Groq não distingue isso no status
     // HTTP. Tratado sempre como `limite` (retryable: AIOrchestrator pode
     // tentar o próximo provider gratuito da lista, nunca um pago).
-    throw new ProviderError('limite', 'Groq sinalizou limite de uso do free tier (HTTP 429).')
+    throw new ProviderError('limite', 'Groq sinalizou limite de uso do free tier (HTTP 429).', { statusHttp: resp.status })
   }
   if (resp.status >= 500) {
-    throw new ProviderError('indisponivel', `Groq indisponível (HTTP ${resp.status}).`)
+    throw new ProviderError('indisponivel', `Groq indisponível (HTTP ${resp.status}).`, { statusHttp: resp.status })
   }
   if (!resp.ok) {
-    throw new ProviderError('desconhecido', `Groq respondeu HTTP ${resp.status} (não classificado).`)
+    throw new ProviderError('desconhecido', `Groq respondeu HTTP ${resp.status} (não classificado).`, { statusHttp: resp.status })
   }
 
   let dados
   try {
     dados = await resp.json()
   } catch {
-    throw new ProviderError('resposta_invalida', 'Groq respondeu um corpo que não é JSON válido.')
+    throw new ProviderError('resposta_invalida', 'Groq respondeu um corpo que não é JSON válido.', { statusHttp: resp.status, etapa: 'parse_resposta' })
   }
 
   const texto = dados.choices?.[0]?.message?.content
   if (typeof texto !== 'string') {
-    throw new ProviderError('resposta_invalida', 'Resposta da Groq não contém conteúdo de mensagem.')
+    throw new ProviderError('resposta_invalida', 'Resposta da Groq não contém conteúdo de mensagem.', { statusHttp: resp.status, etapa: 'parse_resposta' })
   }
 
   return {

@@ -43,12 +43,16 @@ export class ProviderError extends Error {
    * @param {string} mensagem - mensagem segura para log (nunca inclui a API key)
    * @param {Object} [opts]
    * @param {boolean} [opts.podeTentarOutroProvider] - força a decisão de fallback independente do tipo (ex.: resposta_invalida ainda permite tentar o outro provider)
+   * @param {number} [opts.statusHttp] - status HTTP cru devolvido pelo provedor, quando a falha vier de uma resposta HTTP (diagnóstico — nunca usado para decidir fallback, só para log/observabilidade, ver api/ia-radar.js)
+   * @param {string} [opts.etapa] - em que etapa do pipeline a falha ocorreu ('chamada_provider' | 'parse_resposta' | 'validacao_schema'), usado só para diagnóstico/log
    */
-  constructor(tipo, mensagem, { podeTentarOutroProvider } = {}) {
+  constructor(tipo, mensagem, { podeTentarOutroProvider, statusHttp, etapa } = {}) {
     super(mensagem)
     this.name = 'ProviderError'
     this.tipo = TIPOS_ERRO_PROVIDER.includes(tipo) ? tipo : 'desconhecido'
     this.retryable = RETRYABLE.has(this.tipo)
     this.podeTentarOutroProvider = podeTentarOutroProvider ?? (this.retryable || this.tipo === 'resposta_invalida')
+    this.statusHttp = statusHttp ?? null
+    this.etapa = etapa || 'chamada_provider'
   }
 }

@@ -185,6 +185,9 @@ describe('GroqProvider (provider PRINCIPAL padrão, free tier)', () => {
     expect(erro).toBeInstanceOf(ProviderError)
     expect(erro.tipo).toBe('limite')
     expect(erro.retryable).toBe(true)
+    // Diagnóstico (investigação do 502 reportado em produção): o status
+    // HTTP cru do provedor precisa chegar ao log em api/ia-radar.js.
+    expect(erro.statusHttp).toBe(429)
   })
 
   it('401 classifica como credencial_invalida, nunca expõe a chave na mensagem', async () => {

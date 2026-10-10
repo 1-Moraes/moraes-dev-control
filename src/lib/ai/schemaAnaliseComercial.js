@@ -4,6 +4,20 @@
 // provider responder, ANTES de a resposta seguir para o frontend ou ser
 // persistida. Nunca lança — devolve {valido, erros, dados} para quem chama
 // decidir o que fazer (log + erro `resposta_invalida`, nunca um crash).
+//
+// CORREÇÃO (investigação do 502 reportado em produção com Groq): o prompt
+// de sistema já pede "sem markdown, sem texto antes ou depois" (ver
+// promptComercial.js), mas modelos abertos servidos pelo Groq (Llama/
+// GPT-OSS/Qwen) frequentemente ignoram essa instrução e devolvem o JSON
+// envolto em um bloco de código Markdown (```json ... ```) ou com uma
+// frase curta antes/depois ("Aqui está a análise:" / "Espero que ajude!").
+// Isso nunca era culpa do modelo/chave em si — era o `JSON.parse` direto
+// aqui falhando por um motivo puramente de formatação, e isso contava
+// como `resposta_invalida` (502) mesmo com a análise, na prática, correta.
+// `extrairJsonDeTexto` normaliza SÓ a camada externa de formatação antes
+// do parse — a validação estrutural abaixo continua exatamente tão
+// estrita quanto antes (nenhum campo passa a ser opcional, nenhuma regra
+// foi afrouxada).
 
 const CAMPOS_STRING_OBRIGATORIOS = ['resumo_comercial', 'oportunidade_principal']
 const CAMPOS_ARRAY_STRING = ['evidencias_utilizadas', 'hipoteses', 'limitacoes']
@@ -15,19 +29,102 @@ function eArrayDeString(v) {
   return Array.isArray(v) && v.every((item) => typeof item === 'string')
 }
 
+const REGEX_BLOCO_MARKDOWN = /^```(?:json)?\s*([\s\S]*?)\s*```$/i
+
 /**
- * @param {unknown} textoResposta - texto bruto devolvido pelo provider (deve ser um JSON)
+ * Encontra o primeiro `{` e o `}` que fecha exatamente esse bloco
+ * (contagem de chaves respeitando strings e escapes, para não parar num
+ * `}` que só existe dentro de um valor de string). Usado só como ÚLTIMA
+ * tentativa, depois que o texto já tentou ser interpretado como JSON puro
+ * e sem o bloco Markdown — nunca "corrige" texto genuinamente malformado
+ * (chaves desbalanceadas devolvem null, e quem chama cai de volta no erro
+ * original de parse).
+ * @param {string} texto
+ * @returns {string|null}
+ */
+function extrairPrimeiroObjetoBalanceado(texto) {
+  const inicio = texto.indexOf('{')
+  if (inicio === -1) return null
+
+  let profundidade = 0
+  let dentroDeString = false
+  let escapando = false
+
+  for (let i = inicio; i < texto.length; i++) {
+    const c = texto[i]
+    if (escapando) {
+      escapando = false
+      continue
+    }
+    if (c === '\\' && dentroDeString) {
+      escapando = true
+      continue
+    }
+    if (c === '"') {
+      dentroDeString = !dentroDeString
+      continue
+    }
+    if (dentroDeString) continue
+    if (c === '{') profundidade++
+    else if (c === '}') {
+      profundidade--
+      if (profundidade === 0) return texto.slice(inicio, i + 1)
+    }
+  }
+  return null // chaves nunca fecharam — texto genuinamente malformado
+}
+
+/**
+ * Remove só a "casca" de formatação mais comum em torno de um JSON antes
+ * de tentar interpretá-lo — nunca tenta reparar o CONTEÚDO do JSON em si.
+ * @param {string} textoResposta
+ * @returns {{valor: Object|null, erro: string|null}}
+ */
+function tentarParseTolerante(textoResposta) {
+  const bruto = typeof textoResposta === 'string' ? textoResposta.trim() : textoResposta
+
+  try {
+    return { valor: JSON.parse(bruto), erro: null }
+  } catch {
+    // segue para as tentativas tolerantes abaixo
+  }
+
+  if (typeof bruto === 'string') {
+    const semBlocoMarkdown = bruto.match(REGEX_BLOCO_MARKDOWN)?.[1]?.trim()
+    if (semBlocoMarkdown) {
+      try {
+        return { valor: JSON.parse(semBlocoMarkdown), erro: null }
+      } catch {
+        // segue para a extração por chaves balanceadas
+      }
+    }
+
+    const objetoExtraido = extrairPrimeiroObjetoBalanceado(bruto)
+    if (objetoExtraido) {
+      try {
+        return { valor: JSON.parse(objetoExtraido), erro: null }
+      } catch {
+        // nenhuma tentativa funcionou
+      }
+    }
+  }
+
+  return { valor: null, erro: 'Resposta não é um JSON válido.' }
+}
+
+/**
+ * @param {unknown} textoResposta - texto bruto devolvido pelo provider (deve conter um JSON, eventualmente envolto em markdown/texto)
  * @returns {{valido: boolean, erros: string[], dados: Object|null}}
  */
 export function validarAnaliseComercial(textoResposta) {
   const erros = []
   let obj
 
-  try {
-    obj = JSON.parse(textoResposta)
-  } catch {
-    return { valido: false, erros: ['Resposta não é um JSON válido.'], dados: null }
+  const resultadoParse = tentarParseTolerante(textoResposta)
+  if (resultadoParse.erro) {
+    return { valido: false, erros: [resultadoParse.erro], dados: null }
   }
+  obj = resultadoParse.valor
 
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     return { valido: false, erros: ['Resposta não é um objeto JSON.'], dados: null }

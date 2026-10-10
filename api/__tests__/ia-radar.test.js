@@ -132,7 +132,7 @@ describe('api/ia-radar handler', () => {
     expect(JSON.stringify(res._body)).not.toContain('SEGREDO')
   })
 
-  it('sucesso: devolve dados estruturados, provider, model e contagem de uso', async () => {
+  it('sucesso: devolve dados estruturados, provider, model, contagem de uso e um requestId de correlação', async () => {
     autenticarEAutorizar.mockResolvedValue({ autorizado: true, userId: 'u1', clienteSupabase: CLIENTE_FALSO })
     const jsonValido = JSON.stringify({ resumo_comercial: 'x', oportunidade_principal: 'y' })
     executar.mockResolvedValue({ texto: jsonValido, provider: 'anthropic', model: 'modelo-x', tokensEntrada: 10, tokensSaida: 5, duracaoMs: 100 })
@@ -142,5 +142,41 @@ describe('api/ia-radar handler', () => {
     expect(res._body.status).toBe('ok')
     expect(res._body.dados.resumo_comercial).toBe('x')
     expect(res._body.provider).toBe('anthropic')
+    expect(res._body.requestId).toBeTruthy()
+  })
+
+  // Regressão direta do 502 investigado em produção (Groq configurado
+  // corretamente, chamada bem-sucedida confirmada pelos logs da Vercel, mas
+  // a análise não concluía): o provider devolve o JSON correto envolto em
+  // um bloco de código markdown, exatamente como modelos Groq fazem na
+  // prática mesmo com a instrução "sem markdown" no prompt de sistema —
+  // isso NÃO pode mais virar 502 depois da correção em
+  // schemaAnaliseComercial.js.
+  it('REGRESSÃO (502 em produção com Groq): JSON válido envolto em ```json ... ``` ainda assim conclui com sucesso (nunca mais 502 só por formatação)', async () => {
+    autenticarEAutorizar.mockResolvedValue({ autorizado: true, userId: 'u1', clienteSupabase: CLIENTE_FALSO })
+    const jsonEnvolto = '```json\n' + JSON.stringify({ resumo_comercial: 'Resumo real', oportunidade_principal: 'Oportunidade real' }) + '\n```'
+    executar.mockResolvedValue({ texto: jsonEnvolto, provider: 'groq', model: 'llama-3.1-8b-instant', tokensEntrada: 20, tokensSaida: 15, duracaoMs: 300 })
+    const res = fakeRes()
+    await handler({ method: 'POST', headers: { authorization: 'Bearer t' }, body: { tarefa: 'analisar_oportunidade', empresaCandidata: EMPRESA_VALIDA } }, res)
+    expect(res._status).toBe(200)
+    expect(res._body.status).toBe('ok')
+    expect(res._body.provider).toBe('groq')
+    expect(res._body.dados.resumo_comercial).toBe('Resumo real')
+  })
+
+  it('erro de provider: a resposta ao cliente sempre inclui um requestId, mesmo sem detalhe cru do provedor', async () => {
+    autenticarEAutorizar.mockResolvedValue({ autorizado: true, userId: 'u1', clienteSupabase: CLIENTE_FALSO })
+    const erro = new Error('Groq sinalizou limite de uso do free tier (HTTP 429).')
+    erro.tipo = 'limite'
+    erro.statusHttp = 429
+    erro.etapa = 'chamada_provider'
+    erro.tentativas = [{ provider: 'groq', sucesso: false, tipoErro: 'limite' }]
+    executar.mockRejectedValue(erro)
+    const res = fakeRes()
+    await handler({ method: 'POST', headers: { authorization: 'Bearer t' }, body: { tarefa: 'analisar_oportunidade', empresaCandidata: EMPRESA_VALIDA } }, res)
+    expect(res._status).toBe(502)
+    expect(res._body.estado).toBe('limite_provedor')
+    expect(res._body.requestId).toBeTruthy()
+    expect(res._body.mensagemErro).toContain('cota gratuita')
   })
 })
